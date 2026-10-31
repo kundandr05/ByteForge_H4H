@@ -1,0 +1,233 @@
+// Prisma schema for DispatchGrid
+// SQLite database provider for local development & hackathon speed
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// 1. Technician Model
+// Represents field technicians, shift constraints, skills, and service zones
+model Technician {
+  id                 String                     @id @default(uuid())
+  name               String
+  email              String                     @unique
+  phone              String
+  skills             String                     // JSON-encoded array of skill tags, e.g. ["HVAC", "ELECTRICAL"]
+  serviceZones       String                     // JSON-encoded array of zones, e.g. ["ZONE_NORTH", "ZONE_EAST"]
+  latitude           Float
+  longitude          Float
+  shiftStart         String                     // HH:mm 24-hr UTC, e.g. "08:00"
+  shiftEnd           String                     // HH:mm 24-hr UTC, e.g. "17:00"
+  availabilityStatus String                     @default("AVAILABLE") // AVAILABLE, ON_SHIFT, UNAVAILABLE, OFF_DUTY
+  createdAt          DateTime                   @default(now())
+  updatedAt          DateTime                   @updatedAt
+
+  // Relationships
+  assignments        Assignment[]
+  unavailabilities   TechnicianUnavailability[]
+  disruptionEvents   DisruptionEvent[]
+  selectedRunDetails SchedulingRunDetail[]      @relation("SelectedTechnician")
+  previousRunDetails SchedulingRunDetail[]      @relation("PreviousTechnician")
+
+  @@index([availabilityStatus])
+  @@map("technicians")
+}
+
+// 2. Job Model
+// Represents dispatch work orders, SLA constraints, and required skills
+model Job {
+  id                   String                @id @default(uuid())
+  customerName         String
+  description          String
+  requiredSkills       String                // JSON-encoded array of required skills
+  priority             String                @default("MEDIUM") // LOW, MEDIUM, HIGH, CRITICAL
+  estimatedDuration    Int                   // Duration in minutes (> 0)
+  latitude             Float
+  longitude            Float
+  serviceZone          String
+  earliestStart        DateTime              // UTC ISO-8601
+  latestEnd            DateTime              // UTC ISO-8601
+  slaDeadline          DateTime              // UTC ISO-8601
+  status               String                @default("PENDING") // PENDING, ASSIGNED, IN_PROGRESS, COMPLETED, CANCELLED, UNASSIGNED
+  createdAt            DateTime              @default(now())
+  updatedAt            DateTime              @updatedAt
+
+  // Relationships
+  assignments          Assignment[]
+  disruptionEvents     DisruptionEvent[]
+  schedulingRunDetails SchedulingRunDetail[]
+
+  @@index([status])
+  @@index([priority])
+  @@index([serviceZone])
+  @@index([earliestStart, latestEnd])
+  @@index([slaDeadline])
+  @@map("jobs")
+}
+
+// 3. Assignment Model
+// Links jobs to technicians for a specific scheduled window
+model Assignment {
+  id             String     @id @default(uuid())
+  jobId          String
+  technicianId   String
+  scheduledStart DateTime   // UTC ISO-8601
+  scheduledEnd   DateTime   // UTC ISO-8601
+  travelTime     Int        @default(0) // Travel time in minutes
+  status         String     @default("SCHEDULED") // SCHEDULED, EN_ROUTE, IN_PROGRESS, COMPLETED, CANCELLED
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+
+  // Foreign keys
+  job            Job        @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  technician     Technician @relation(fields: [technicianId], references: [id], onDelete: Cascade)
+
+  @@index([jobId])
+  @@index([technicianId])
+  @@index([scheduledStart, scheduledEnd])
+  @@index([status])
+  @@index([technicianId, scheduledStart])
+  @@map("assignments")
+}
+
+// 4. Scheduling Run Model
+// Tracks optimization and recovery engine executions
+model SchedulingRun {
+  id                    String                @id @default(uuid())
+  runType               String                // INITIAL, OPTIMIZATION, RECOVERY
+  status                String                @default("PENDING") // PENDING, RUNNING, COMPLETED, FAILED
+  objectiveScore        Float?
+  totalJobs             Int                   @default(0)
+  assignedJobs          Int                   @default(0)
+  unassignedJobs        Int                   @default(0)
+  totalTravelTime       Int                   @default(0) // In minutes
+  slaViolations         Int                   @default(0)
+  technicianUtilization Float?                // Percentage (0.0 to 100.0)
+  createdAt             DateTime              @default(now())
+  completedAt           DateTime?
+
+  // Relationships
+  details               SchedulingRunDetail[]
+
+  @@index([runType])
+  @@index([status])
+  @@index([createdAt])
+  @@map("scheduling_runs")
+}
+
+// 5. Scheduling Run Detail Model
+// Preserves historical job assignments and rejection audit trails per run
+model SchedulingRunDetail {
+  id                   String        @id @default(uuid())
+  schedulingRunId      String
+  jobId                String
+  selectedTechnicianId String?
+  previousTechnicianId String?
+  scheduledStart       DateTime?
+  scheduledEnd         DateTime?
+  assignmentStatus     String        // ASSIGNED, UNASSIGNED, REASSIGNED
+  explanation          String?
+  rejectionReasons     String?       // JSON-encoded array or object of rejection explanations
+  createdAt            DateTime      @default(now())
+
+  // Foreign keys
+  schedulingRun        SchedulingRun @relation(fields: [schedulingRunId], references: [id], onDelete: Cascade)
+  job                  Job           @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  selectedTechnician   Technician?   @relation("SelectedTechnician", fields: [selectedTechnicianId], references: [id], onDelete: SetNull)
+  previousTechnician   Technician?   @relation("PreviousTechnician", fields: [previousTechnicianId], references: [id], onDelete: SetNull)
+
+  @@index([schedulingRunId])
+  @@index([jobId])
+  @@index([selectedTechnicianId])
+  @@map("scheduling_run_details")
+}
+
+// 6. Disruption Event Model
+// Captures unplanned real-time events that trigger recovery replanning
+model DisruptionEvent {
+  id             String      @id @default(uuid())
+  eventType      String      // TECHNICIAN_UNAVAILABLE, URGENT_JOB_ARRIVAL, JOB_DURATION_CHANGED, JOB_CANCELLED, EARLY_COMPLETION, DELAYED_COMPLETION
+  technicianId   String?
+  jobId          String?
+  description    String
+  eventPayload   String?     // JSON-encoded metadata payload
+  recoveryStatus String      @default("PENDING") // PENDING, IN_PROGRESS, RESOLVED, DISMISSED
+  createdAt      DateTime    @default(now())
+  resolvedAt     DateTime?
+
+  // Foreign keys
+  technician     Technician? @relation(fields: [technicianId], references: [id], onDelete: SetNull)
+  job            Job?        @relation(fields: [jobId], references: [id], onDelete: SetNull)
+
+  @@index([eventType])
+  @@index([recoveryStatus])
+  @@index([technicianId])
+  @@index([jobId])
+  @@map("disruption_events")
+}
+
+// 7. Technician Unavailability Model
+// Records periods where technicians cannot take assignments (sick, leave, training)
+model TechnicianUnavailability {
+  id           String     @id @default(uuid())
+  technicianId String
+  startTime    DateTime   // UTC ISO-8601
+  endTime      DateTime   // UTC ISO-8601
+  reason       String
+  createdAt    DateTime   @default(now())
+
+  // Foreign key
+  technician   Technician @relation(fields: [technicianId], references: [id], onDelete: Cascade)
+
+  @@index([technicianId])
+  @@index([startTime, endTime])
+  @@map("technician_unavailabilities")
+}
+
+// 8. Audit Log Model
+// Audit trail for critical operational, scheduling, and configuration changes
+model AuditLog {
+  id            String   @id @default(uuid())
+  entityType    String   // TECHNICIAN, JOB, ASSIGNMENT, SCHEDULE, DISRUPTION
+  entityId      String
+  action        String   // CREATE, UPDATE, DELETE, REASSIGN, CANCEL
+  previousValue String?  // JSON-encoded snapshot prior to change
+  newValue      String?  // JSON-encoded snapshot post change
+  description   String?
+  createdAt     DateTime @default(now())
+
+  @@index([entityType, entityId])
+  @@index([action])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
+
+// 9. Idempotency Record Model
+// Ensures critical scheduling and recovery dispatch operations are strictly idempotent
+model IdempotencyRecord {
+  id             String   @id @default(uuid())
+  idempotencyKey String   @unique
+  operationType  String   // OPTIMIZE_SCHEDULE, RESOLVE_DISRUPTION, CREATE_ASSIGNMENT
+  responseStatus Int
+  responseBody   String   // JSON-encoded cached response payload
+  createdAt      DateTime @default(now())
+
+  @@index([operationType])
+  @@index([createdAt])
+  @@map("idempotency_records")
+}
+
+// 10. System Audit Baseline Model (from Phase 1)
+model SystemAudit {
+  id        String   @id @default(uuid())
+  action    String
+  details   String?
+  createdAt DateTime @default(now())
+
+  @@map("system_audits")
+}
