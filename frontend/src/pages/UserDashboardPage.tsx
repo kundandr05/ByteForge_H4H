@@ -18,13 +18,16 @@ import {
   ArrowLeft,
   X,
   RefreshCw,
+  Edit3,
+  Trash2,
+  XCircle,
 } from 'lucide-react';
 import { jobsApi, aiBookingApi } from '../services/dispatchApi';
 import { Job } from '../types/dispatch';
 import { useAuth } from '../context/AuthContext';
 import { AiBookingChatModal } from '../components/chat/AiBookingChatModal';
 import { ensureArray } from '../utils/formatters';
-import { formatServiceZoneAddress } from '../utils/zoneAddress';
+import { formatServiceZoneAddress, ZONE_ADDRESS_MAP } from '../utils/zoneAddress';
 
 interface ServiceItem {
   id: string;
@@ -316,6 +319,64 @@ export const UserDashboardPage: React.FC = () => {
   const [selectedPriority, setSelectedPriority] = useState<'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL'>('MEDIUM');
   const [bookingInProgress, setBookingInProgress] = useState(false);
   const [bookingSuccessAlert, setBookingSuccessAlert] = useState<string | null>(null);
+  // Edit Booking State
+  const [editingBooking, setEditingBooking] = useState<Job | null>(null);
+  const [editBookingForm, setEditBookingForm] = useState({
+    description: '',
+    priority: 'MEDIUM' as 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL',
+    serviceZone: 'ZONE_NORTH',
+    estimatedDuration: 60,
+  });
+  const [savingBookingEdit, setSavingBookingEdit] = useState(false);
+
+  const handleOpenEditBooking = (job: Job) => {
+    setEditingBooking(job);
+    setEditBookingForm({
+      description: job.description,
+      priority: job.priority as any,
+      serviceZone: job.serviceZone || 'ZONE_NORTH',
+      estimatedDuration: job.estimatedDuration || 60,
+    });
+  };
+
+  const handleSaveBookingEdit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingBooking) return;
+    setSavingBookingEdit(true);
+    try {
+      await jobsApi.update(editingBooking.id, editBookingForm);
+      setBookingSuccessAlert(`Booking #${editingBooking.id.slice(0, 8).toUpperCase()} updated successfully!`);
+      setEditingBooking(null);
+      await fetchUserJobs();
+    } catch (err: any) {
+      alert(err.message || 'Failed to update booking');
+    } finally {
+      setSavingBookingEdit(false);
+    }
+  };
+
+  const handleCancelBooking = async (jobId: string) => {
+    if (!window.confirm('Are you sure you want to cancel this appointment?')) return;
+    try {
+      await jobsApi.updateStatus(jobId, 'CANCELLED');
+      setBookingSuccessAlert('Appointment status updated to CANCELLED.');
+      await fetchUserJobs();
+    } catch (err: any) {
+      alert(err.message || 'Failed to cancel appointment');
+    }
+  };
+
+  const handleDeleteBooking = async (jobId: string) => {
+    if (!window.confirm('Are you sure you want to permanently delete this booking?')) return;
+    try {
+      await jobsApi.updateStatus(jobId, 'CANCELLED').catch(() => {});
+      await jobsApi.delete(jobId);
+      setBookingSuccessAlert('Booking deleted successfully.');
+      await fetchUserJobs();
+    } catch (err: any) {
+      alert(err.message || 'Failed to delete booking');
+    }
+  };
 
   // Sync category param with state
   useEffect(() => {
@@ -741,7 +802,8 @@ export const UserDashboardPage: React.FC = () => {
                       </div>
                     </div>
 
-                    <div className="sm:text-right shrink-0">
+                    <div className="flex flex-col sm:items-end gap-3 shrink-0">
+                      {/* Real-time Location & Specialist Status */}
                       {activeAssignment?.technician ? (
                         <div className="rounded-xl border border-emerald-200 bg-emerald-50/80 p-3.5 text-left sm:text-right space-y-1">
                           <div className="flex items-center sm:justify-end gap-1.5 text-[10px] uppercase font-bold text-emerald-800 tracking-wider">
@@ -754,28 +816,72 @@ export const UserDashboardPage: React.FC = () => {
                           <div className="font-bold text-xs text-slate-900 mt-0.5">
                             {activeAssignment.technician.name}
                           </div>
-                          <div className="text-[11px] text-slate-600 flex items-center sm:justify-end gap-1 font-mono">
-                            <MapPin className="h-3 w-3 text-emerald-600" />
-                            GPS: {activeAssignment.technician.latitude ? `${activeAssignment.technician.latitude.toFixed(4)}°N, ${Math.abs(activeAssignment.technician.longitude || 0).toFixed(4)}°W` : '37.7749°N, 122.4194°W'}
+                          <div className="text-[11px] text-emerald-700 flex items-center sm:justify-end gap-1 font-mono font-semibold">
+                            <MapPin className="h-3.5 w-3.5 text-emerald-600" />
+                            <span>GPS: {activeAssignment.technician.latitude ? `${activeAssignment.technician.latitude.toFixed(4)}°N, ${Math.abs(activeAssignment.technician.longitude || 0).toFixed(4)}°W` : '37.7749°N, 122.4194°W'}</span>
                           </div>
                           <div className="text-[11px] text-slate-500 flex items-center sm:justify-end gap-1">
                             <Phone className="h-3 w-3 text-brand-500" />
-                            {activeAssignment.technician.phone || '+1 (555) 0111'}
+                            <span>{activeAssignment.technician.phone || '+1 (555) 0111'}</span>
                           </div>
                           <div className="text-[10px] font-semibold text-emerald-700 bg-emerald-100/70 px-2 py-0.5 rounded inline-block mt-1">
                             ETA: ~{activeAssignment.travelTime || 12} mins ({activeAssignment.travelTime ? (activeAssignment.travelTime * 0.25).toFixed(1) : '2.4'} km away)
                           </div>
                         </div>
                       ) : (
-                        <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-left sm:text-right">
-                          <div className="text-[10px] uppercase font-bold text-amber-600 tracking-wider flex items-center sm:justify-end gap-1">
-                            <Clock className="h-3 w-3" /> Matching Specialist
+                        <div className="rounded-xl border border-blue-200 bg-blue-50/80 p-3.5 text-left sm:text-right space-y-1">
+                          <div className="text-[10px] uppercase font-bold text-blue-800 tracking-wider flex items-center sm:justify-end gap-1.5">
+                            <span className="relative flex h-2 w-2">
+                              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span>
+                              <span className="relative inline-flex rounded-full h-2 w-2 bg-blue-600"></span>
+                            </span>
+                            <span>Real-Time Location & Dispatch</span>
                           </div>
-                          <div className="text-xs text-slate-500 mt-0.5">
+                          <div className="text-xs font-bold text-slate-800 flex items-center sm:justify-end gap-1">
+                            <MapPin className="h-3.5 w-3.5 text-rose-500 shrink-0" />
+                            <span className="font-mono text-[11px]">GPS: {job.latitude ? `${job.latitude.toFixed(4)}°N, ${Math.abs(job.longitude || 0).toFixed(4)}°W` : '37.7749°N, 122.4194°W'}</span>
+                          </div>
+                          <div className="text-[11px] text-slate-600 font-medium">
+                            Physical Address: {formatServiceZoneAddress(job.serviceZone, true)}
+                          </div>
+                          <div className="text-[10px] font-semibold text-blue-700 bg-blue-100/80 px-2 py-0.5 rounded inline-block mt-0.5">
                             Autonomous engine assigning best route
                           </div>
                         </div>
                       )}
+
+                      {/* Action Buttons: Edit, Cancel, Delete */}
+                      <div className="flex items-center gap-1.5 pt-1 sm:pt-0 sm:justify-end">
+                        <button
+                          type="button"
+                          onClick={() => handleOpenEditBooking(job)}
+                          className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-blue-200 bg-blue-50 hover:bg-blue-100 text-blue-700 font-bold text-xs transition cursor-pointer shadow-2xs"
+                          title="Edit appointment details and service zone"
+                        >
+                          <Edit3 className="h-3.5 w-3.5" />
+                          <span>Edit</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => handleCancelBooking(job.id)}
+                          className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-amber-200 bg-amber-50 hover:bg-amber-100 text-amber-700 font-bold text-xs transition cursor-pointer shadow-2xs"
+                          title="Cancel this appointment"
+                        >
+                          <XCircle className="h-3.5 w-3.5" />
+                          <span>Cancel</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteBooking(job.id)}
+                          className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-rose-200 bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold text-xs transition cursor-pointer shadow-2xs"
+                          title="Delete this appointment"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                          <span>Delete</span>
+                        </button>
+                      </div>
                     </div>
                   </div>
                 );
@@ -899,6 +1005,108 @@ export const UserDashboardPage: React.FC = () => {
 
       {/* Floating AI Voice/Chat Assistant Widget */}
       <AiBookingChatModal onBookingSuccess={fetchUserJobs} />
+      {/* EDIT BOOKING MODAL */}
+      {editingBooking && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 backdrop-blur-xs p-4">
+          <div className="w-full max-w-md rounded-2xl border border-slate-800 bg-slate-900 p-6 text-slate-200 shadow-2xl">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+              <div>
+                <h3 className="text-base font-bold text-white">
+                  Edit Service Booking #{editingBooking.id.slice(0, 8).toUpperCase()}
+                </h3>
+                <p className="text-xs text-slate-400">
+                  Update service details, urgency, and physical address
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setEditingBooking(null)}
+                className="rounded-lg p-1 text-slate-400 hover:bg-slate-800 hover:text-white cursor-pointer"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveBookingEdit} className="space-y-4 pt-4 text-xs">
+              <div>
+                <label className="block text-slate-300 font-semibold mb-1">Service Description</label>
+                <textarea
+                  rows={2}
+                  required
+                  value={editBookingForm.description}
+                  onChange={(e) => setEditBookingForm({ ...editBookingForm, description: e.target.value })}
+                  className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-white placeholder-slate-500 focus:border-brand-500 focus:outline-none"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-slate-300 font-semibold mb-1">Priority</label>
+                  <select
+                    value={editBookingForm.priority}
+                    onChange={(e) => setEditBookingForm({ ...editBookingForm, priority: e.target.value as any })}
+                    className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-white focus:border-brand-500 focus:outline-none"
+                  >
+                    <option value="LOW">LOW</option>
+                    <option value="MEDIUM">MEDIUM</option>
+                    <option value="HIGH">HIGH</option>
+                    <option value="CRITICAL">CRITICAL</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-slate-300 font-semibold mb-1">Duration (Mins)</label>
+                  <input
+                    type="number"
+                    min={15}
+                    max={480}
+                    step={15}
+                    value={editBookingForm.estimatedDuration}
+                    onChange={(e) => setEditBookingForm({ ...editBookingForm, estimatedDuration: Number(e.target.value) })}
+                    className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-white focus:border-brand-500 focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-slate-300 font-semibold mb-1">Service Zone (Physical Address)</label>
+                <select
+                  value={editBookingForm.serviceZone}
+                  onChange={(e) => setEditBookingForm({ ...editBookingForm, serviceZone: e.target.value })}
+                  className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-white focus:border-brand-500 focus:outline-none"
+                >
+                  {Object.entries(ZONE_ADDRESS_MAP).map(([zoneKey, info]) => (
+                    <option key={zoneKey} value={zoneKey}>
+                      {info.address} ({info.label})
+                    </option>
+                  ))}
+                </select>
+                <p className="text-[11px] text-slate-400 mt-1">
+                  Selected: {formatServiceZoneAddress(editBookingForm.serviceZone)}
+                </p>
+              </div>
+
+              <div className="flex justify-end gap-2 pt-3 border-t border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setEditingBooking(null)}
+                  disabled={savingBookingEdit}
+                  className="rounded-xl border border-slate-700 px-4 py-2 font-semibold text-slate-300 hover:bg-slate-800 cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={savingBookingEdit}
+                  className="rounded-xl bg-brand-600 px-4 py-2 font-bold text-white shadow-md hover:bg-brand-500 disabled:opacity-50 cursor-pointer"
+                >
+                  {savingBookingEdit ? 'Saving...' : 'Save Changes'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

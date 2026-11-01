@@ -143,6 +143,13 @@ export class JobService {
         skip,
         take: limit,
         orderBy,
+        include: {
+          assignments: {
+            include: {
+              technician: true,
+            },
+          },
+        },
       }),
     ]);
 
