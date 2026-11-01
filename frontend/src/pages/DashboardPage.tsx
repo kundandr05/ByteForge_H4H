@@ -55,8 +55,8 @@ export const DashboardPage: React.FC = () => {
     setError(null);
     try {
       const [jobsRes, techsRes, currentScheduleRes, runsRes, disruptionsRes] = await Promise.all([
-        jobsApi.list({ limit: 250 }),
-        techniciansApi.list({ limit: 100 }),
+        jobsApi.list({ limit: 250 }).catch(() => ({ data: [] })),
+        techniciansApi.list({ limit: 100 }).catch(() => ({ data: [] })),
         schedulingApi.getCurrent().catch(() => ({ data: { assignments: [], totalActiveAssignments: 0, assignedTechniciansCount: 0, totalTravelMinutes: 0 } })),
         schedulingApi.getRuns(1, 5).catch(() => ({ data: [] })),
         disruptionsApi.list({ limit: 5 }).catch(() => ({ data: [] })),

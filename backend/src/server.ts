@@ -4,7 +4,7 @@ import { prisma } from './config/prisma';
 import { logger } from './utils/logger';
 import { autoDispatchService } from './services/autoDispatch.service';
 
-const server = app.listen(config.PORT, () => {
+const server = app.listen(config.PORT, '0.0.0.0', () => {
   logger.info(`DispatchGrid Backend listening on port ${config.PORT}`);
   logger.info(`Environment: ${config.NODE_ENV}`);
   logger.info(`Health check: http://localhost:${config.PORT}/api/health`);
