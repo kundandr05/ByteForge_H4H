@@ -342,14 +342,20 @@ export const UserDashboardPage: React.FC = () => {
   const handleSaveBookingEdit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingBooking) return;
+    const currentId = editingBooking.id;
     setSavingBookingEdit(true);
     try {
-      await jobsApi.update(editingBooking.id, editBookingForm);
-      setBookingSuccessAlert(`Booking #${editingBooking.id.slice(0, 8).toUpperCase()} updated successfully!`);
+      // Optimistic update
+      setJobs((prev) =>
+        prev.map((j) => (j.id === currentId ? { ...j, ...editBookingForm } : j))
+      );
+      await jobsApi.update(currentId, editBookingForm);
+      setBookingSuccessAlert(`Booking #${currentId.slice(0, 8).toUpperCase()} updated successfully!`);
       setEditingBooking(null);
       await fetchUserJobs();
     } catch (err: any) {
       alert(err.message || 'Failed to update booking');
+      await fetchUserJobs();
     } finally {
       setSavingBookingEdit(false);
     }
@@ -358,23 +364,30 @@ export const UserDashboardPage: React.FC = () => {
   const handleCancelBooking = async (jobId: string) => {
     if (!window.confirm('Are you sure you want to cancel this appointment?')) return;
     try {
+      // Optimistic instant status change
+      setJobs((prev) =>
+        prev.map((j) => (j.id === jobId ? { ...j, status: 'CANCELLED' as any } : j))
+      );
       await jobsApi.updateStatus(jobId, 'CANCELLED');
       setBookingSuccessAlert('Appointment status updated to CANCELLED.');
       await fetchUserJobs();
     } catch (err: any) {
       alert(err.message || 'Failed to cancel appointment');
+      await fetchUserJobs();
     }
   };
 
   const handleDeleteBooking = async (jobId: string) => {
     if (!window.confirm('Are you sure you want to permanently delete this booking?')) return;
     try {
-      await jobsApi.updateStatus(jobId, 'CANCELLED').catch(() => {});
+      // Optimistic instant removal from list
+      setJobs((prev) => prev.filter((j) => j.id !== jobId));
       await jobsApi.delete(jobId);
       setBookingSuccessAlert('Booking deleted successfully.');
       await fetchUserJobs();
     } catch (err: any) {
       alert(err.message || 'Failed to delete booking');
+      await fetchUserJobs();
     }
   };
 

@@ -331,26 +331,20 @@ export class JobService {
       throw AppError.notFound(`Job with ID '${id}' not found.`, 'JOB_NOT_FOUND');
     }
 
-    // Safety check: Cannot delete IN_PROGRESS job
-    if (existingJob.status === 'IN_PROGRESS') {
-      throw AppError.badRequest(
-        'Cannot delete an in-progress job. Complete or cancel it first.',
-        'UNSAFE_OPERATION'
-      );
-    }
-
-    // Safety check: Cannot delete job with active assignments unless explicitly cancelled
-    const hasActiveAssignments = existingJob.assignments.some(
-      (a) => a.status === 'SCHEDULED' || a.status === 'EN_ROUTE' || a.status === 'IN_PROGRESS'
-    );
-    if (hasActiveAssignments && existingJob.status !== 'CANCELLED') {
-      throw AppError.badRequest(
-        'Cannot delete job with active assignments. Cancel assignments or cancel job first.',
-        'UNSAFE_OPERATION'
-      );
-    }
-
     return await prisma.$transaction(async (tx) => {
+      // Automatically clean up assignments, run details, and disruption events linked to this job
+      await tx.assignment.deleteMany({
+        where: { jobId: id },
+      });
+
+      await tx.schedulingRunDetail.deleteMany({
+        where: { jobId: id },
+      });
+
+      await tx.disruptionEvent.deleteMany({
+        where: { jobId: id },
+      });
+
       // Transactional Audit Log prior to deletion
       await tx.auditLog.create({
         data: {

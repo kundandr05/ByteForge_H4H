@@ -69,15 +69,21 @@ export const SchedulingBoardPage: React.FC = () => {
   const handleSaveEdit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingJob) return;
+    const currentId = editingJob.id;
     setSavingEdit(true);
     setSchedError(null);
     try {
-      await jobsApi.update(editingJob.id, editFormData);
-      setAutoScheduleSuccess(`Job #${editingJob.id.slice(0, 8)} updated successfully!`);
+      // Optimistic update
+      setUnassignedJobs((prev) =>
+        prev.map((j) => (j.id === currentId ? { ...j, ...editFormData } : j))
+      );
+      await jobsApi.update(currentId, editFormData);
+      setAutoScheduleSuccess(`Job #${currentId.slice(0, 8)} updated successfully!`);
       setEditingJob(null);
       await fetchData();
     } catch (err: any) {
       setSchedError(err.message || 'Failed to update job');
+      await fetchData();
     } finally {
       setSavingEdit(false);
     }
@@ -86,22 +92,32 @@ export const SchedulingBoardPage: React.FC = () => {
   const handleDeleteJob = async (id: string) => {
     if (!window.confirm('Are you sure you want to delete this work order?')) return;
     try {
+      // Optimistic removal
+      setUnassignedJobs((prev) => prev.filter((j) => j.id !== id));
+      setAssignments((prev) => prev.filter((a) => a.jobId !== id));
       await jobsApi.delete(id);
       setAutoScheduleSuccess('Job deleted successfully.');
       await fetchData();
     } catch (err: any) {
       setSchedError(err.message || 'Failed to delete job.');
+      await fetchData();
     }
   };
 
   const handleCancelAssignment = async (id: string) => {
     if (!window.confirm('Cancel this work order and mark as CANCELLED?')) return;
     try {
+      // Optimistic status update
+      setUnassignedJobs((prev) =>
+        prev.map((j) => (j.id === id ? { ...j, status: 'CANCELLED' as any } : j))
+      );
+      setAssignments((prev) => prev.filter((a) => a.jobId !== id));
       await jobsApi.updateStatus(id, 'CANCELLED');
       setAutoScheduleSuccess('Work order marked as CANCELLED.');
       await fetchData();
     } catch (err: any) {
       setSchedError(err.message || 'Failed to cancel work order.');
+      await fetchData();
     }
   };
 
