@@ -3,6 +3,7 @@ import { autoDispatchService } from '../services/autoDispatch.service';
 import { technicianService } from '../services/technician.service';
 import { AppError } from '../utils/appError';
 import { ApiResponse } from '../types';
+import { dispatchEvents } from '../utils/dispatchEvents';
 
 export class AutoDispatchController {
   /**
@@ -307,6 +308,44 @@ export class AutoDispatchController {
     } catch (error) {
       next(error);
     }
+  };
+
+  /**
+   * Real-time Server-Sent Events (SSE) stream for dispatch updates
+   */
+  public subscribeToStream = (req: Request, res: Response): void => {
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.flushHeaders?.();
+
+    // Initial handshake event
+    res.write(`data: ${JSON.stringify({ type: 'CONNECTED', timestamp: new Date().toISOString() })}\n\n`);
+
+    const onDispatchUpdate = (eventData: any) => {
+      try {
+        res.write(`data: ${JSON.stringify(eventData)}\n\n`);
+      } catch (err) {
+        console.warn('Error writing SSE stream:', err);
+      }
+    };
+
+    dispatchEvents.on('dispatch_update', onDispatchUpdate);
+
+    // Heartbeat every 15s to keep proxy socket open
+    const heartbeat = setInterval(() => {
+      try {
+        res.write(`: heartbeat ${Date.now()}\n\n`);
+      } catch {
+        clearInterval(heartbeat);
+      }
+    }, 15000);
+
+    req.on('close', () => {
+      clearInterval(heartbeat);
+      dispatchEvents.off('dispatch_update', onDispatchUpdate);
+      res.end();
+    });
   };
 }
 

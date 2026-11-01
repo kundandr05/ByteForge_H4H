@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   MessageSquare,
   Mic,
@@ -9,6 +9,8 @@ import {
   Key,
   CheckCircle2,
   Calendar,
+  Volume2,
+  VolumeX,
 } from 'lucide-react';
 import { aiBookingApi, ParsedBookingResult } from '../../services/dispatchApi';
 import { useAuth } from '../../context/AuthContext';
@@ -36,6 +38,7 @@ export const AiBookingChatModal: React.FC<AiBookingChatModalProps> = ({ onBookin
   const [speechSupported, setSpeechSupported] = useState(true);
   const [isLoading, setIsLoading] = useState(false);
   const [showKeyConfig, setShowKeyConfig] = useState(false);
+  const [voiceSpeechEnabled, setVoiceSpeechEnabled] = useState(true);
 
   // Groq API Key management
   const [groqKey, setGroqKey] = useState<string>(() => {
@@ -58,6 +61,44 @@ export const AiBookingChatModal: React.FC<AiBookingChatModalProps> = ({ onBookin
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const recognitionRef = useRef<any>(null);
+
+  // Text-To-Speech (TTS) Voice Synthesis
+  const speakAssistantResponse = useCallback(
+    (rawText: string) => {
+      if (!voiceSpeechEnabled || !('speechSynthesis' in window)) return;
+      try {
+        window.speechSynthesis.cancel();
+        const cleanText = rawText
+          .replace(/[*_#`~]/g, '')
+          .replace(
+            /[\u{1F600}-\u{1F64F}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{1F1E0}-\u{1F1FF}]/gu,
+            ''
+          )
+          .trim();
+        if (!cleanText) return;
+
+        const utterance = new SpeechSynthesisUtterance(cleanText);
+        utterance.rate = 1.05;
+        utterance.pitch = 1.0;
+        const voices = window.speechSynthesis.getVoices();
+        const preferredVoice =
+          voices.find(
+            (v) =>
+              v.lang.startsWith('en') &&
+              (v.name.includes('Natural') ||
+                v.name.includes('Google') ||
+                v.name.includes('Samantha'))
+          ) || voices.find((v) => v.lang.startsWith('en'));
+        if (preferredVoice) {
+          utterance.voice = preferredVoice;
+        }
+        window.speechSynthesis.speak(utterance);
+      } catch (e) {
+        console.warn('Speech synthesis error:', e);
+      }
+    },
+    [voiceSpeechEnabled]
+  );
 
   // Initialize Speech Recognition
   useEffect(() => {
@@ -177,16 +218,19 @@ export const AiBookingChatModal: React.FC<AiBookingChatModalProps> = ({ onBookin
       };
 
       setMessages((prev) => [...prev, assistantMsg]);
+      speakAssistantResponse(assistantMsg.text);
     } catch (err: any) {
+      const errMsg = `Sorry, I encountered an issue analyzing your request: ${err.message || 'Server error'}. Please try again or rephrase.`;
       setMessages((prev) => [
         ...prev,
         {
           id: `error-${Date.now()}`,
           sender: 'assistant',
-          text: `Sorry, I encountered an issue analyzing your request: ${err.message || 'Server error'}. Please try again or rephrase.`,
+          text: errMsg,
           timestamp: new Date(),
         },
       ]);
+      speakAssistantResponse(errMsg);
     } finally {
       setIsLoading(false);
     }
@@ -221,15 +265,17 @@ export const AiBookingChatModal: React.FC<AiBookingChatModalProps> = ({ onBookin
       );
 
       // Add success message
+      const successMsgText = `🎉 Appointment confirmed! Work Order #${createdJob.id.slice(0, 8).toUpperCase()} has been registered. It is now visible on your dashboard and queued for technician dispatch.`;
       setMessages((prev) => [
         ...prev,
         {
           id: `confirmed-${Date.now()}`,
           sender: 'assistant',
-          text: `🎉 Appointment confirmed! Work Order #${createdJob.id.slice(0, 8).toUpperCase()} has been registered. It is now visible on your dashboard and queued in the Admin dispatch console for technician assignment.`,
+          text: successMsgText,
           timestamp: new Date(),
         },
       ]);
+      speakAssistantResponse(successMsgText);
 
       if (onBookingSuccess) {
         onBookingSuccess();
@@ -294,6 +340,27 @@ export const AiBookingChatModal: React.FC<AiBookingChatModalProps> = ({ onBookin
             </div>
 
             <div className="flex items-center gap-1">
+              <button
+                type="button"
+                onClick={() => {
+                  if (voiceSpeechEnabled) {
+                    window.speechSynthesis?.cancel();
+                  }
+                  setVoiceSpeechEnabled(!voiceSpeechEnabled);
+                }}
+                className={`rounded-lg p-1.5 transition-colors ${
+                  voiceSpeechEnabled
+                    ? 'text-brand-400 bg-brand-950/50 hover:bg-brand-900/50'
+                    : 'text-slate-500 hover:bg-slate-800'
+                }`}
+                title={
+                  voiceSpeechEnabled
+                    ? 'Voice Read-Aloud: ON (Click to Mute)'
+                    : 'Voice Read-Aloud: MUTED (Click to Enable)'
+                }
+              >
+                {voiceSpeechEnabled ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}
+              </button>
               <button
                 type="button"
                 onClick={() => setShowKeyConfig((prev) => !prev)}
@@ -380,7 +447,19 @@ export const AiBookingChatModal: React.FC<AiBookingChatModalProps> = ({ onBookin
                       <Mic className="h-2.5 w-2.5" /> Voice Input
                     </div>
                   )}
-                  <p>{msg.text}</p>
+                  <div className="flex items-start justify-between gap-2">
+                    <p className="flex-1">{msg.text}</p>
+                    {msg.sender === 'assistant' && (
+                      <button
+                        type="button"
+                        onClick={() => speakAssistantResponse(msg.text)}
+                        className="text-slate-400 hover:text-brand-300 p-0.5 rounded transition-colors"
+                        title="Replay Voice Speech"
+                      >
+                        <Volume2 className="h-3.5 w-3.5" />
+                      </button>
+                    )}
+                  </div>
 
                   {/* Parsed Booking Confirmation Card */}
                   {msg.parsedBooking && !msg.bookingConfirmed && (

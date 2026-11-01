@@ -21,11 +21,13 @@ import {
   Edit3,
   Trash2,
   XCircle,
+  Navigation,
 } from 'lucide-react';
 import { jobsApi, aiBookingApi } from '../services/dispatchApi';
 import { Job } from '../types/dispatch';
 import { useAuth } from '../context/AuthContext';
 import { AiBookingChatModal } from '../components/chat/AiBookingChatModal';
+import { LiveTrackingMap } from '../components/map/LiveTrackingMap';
 import { ensureArray } from '../utils/formatters';
 import { formatServiceZoneAddress, ZONE_ADDRESS_MAP } from '../utils/zoneAddress';
 
@@ -329,6 +331,53 @@ export const UserDashboardPage: React.FC = () => {
   });
   const [savingBookingEdit, setSavingBookingEdit] = useState(false);
 
+  // Live Tracking Map Modal State
+  const [selectedTrackingJob, setSelectedTrackingJob] = useState<Job | null>(null);
+
+  // Customer Post-Service Rating & Scoring State
+  const [ratingModalJob, setRatingModalJob] = useState<Job | null>(null);
+  const [ratingStars, setRatingStars] = useState<number>(5);
+  const [ratingHover, setRatingHover] = useState<number>(0);
+  const [selectedFeedbackTags, setSelectedFeedbackTags] = useState<string[]>([]);
+  const [reviewNote, setReviewNote] = useState<string>('');
+  const [ratingsStore, setRatingsStore] = useState<
+    Record<string, { rating: number; tags: string[]; note: string; createdAt: string }>
+  >(() => {
+    try {
+      return JSON.parse(localStorage.getItem('dispatchgrid_ratings') || '{}');
+    } catch {
+      return {};
+    }
+  });
+
+  const handleOpenRatingModal = (job: Job) => {
+    const existing = ratingsStore[job.id];
+    setRatingModalJob(job);
+    setRatingStars(existing?.rating || 5);
+    setSelectedFeedbackTags(existing?.tags || ['⚡ On-Time Arrival', '✨ Professional & Clean']);
+    setReviewNote(existing?.note || '');
+  };
+
+  const handleSaveRating = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!ratingModalJob) return;
+    const updatedStore = {
+      ...ratingsStore,
+      [ratingModalJob.id]: {
+        rating: ratingStars,
+        tags: selectedFeedbackTags,
+        note: reviewNote.trim(),
+        createdAt: new Date().toISOString(),
+      },
+    };
+    setRatingsStore(updatedStore);
+    localStorage.setItem('dispatchgrid_ratings', JSON.stringify(updatedStore));
+    setBookingSuccessAlert(
+      `Thank you! Your ${ratingStars}-star review has been recorded.`
+    );
+    setRatingModalJob(null);
+  };
+
   const handleOpenEditBooking = (job: Job) => {
     setEditingBooking(job);
     setEditBookingForm({
@@ -406,8 +455,8 @@ export const UserDashboardPage: React.FC = () => {
     }
   }, [categoryParam, tabParam]);
 
-  const fetchUserJobs = useCallback(async () => {
-    setLoading(true);
+  const fetchUserJobs = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true);
     try {
       const res = await jobsApi.list({ limit: 100 });
       const currentCustomerName = (user.name || '').toLowerCase().trim();
@@ -423,12 +472,16 @@ export const UserDashboardPage: React.FC = () => {
     } catch (err) {
       console.warn('Failed to load user appointments:', err);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, [user.name]);
 
   useEffect(() => {
     fetchUserJobs();
+    const syncTimer = setInterval(() => {
+      fetchUserJobs(true);
+    }, 3500);
+    return () => clearInterval(syncTimer);
   }, [fetchUserJobs]);
 
   const activeJobs = jobs.filter((j) =>
@@ -717,8 +770,8 @@ export const UserDashboardPage: React.FC = () => {
               </span>
               <button
                 type="button"
-                onClick={fetchUserJobs}
-                className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-2xs hover:bg-slate-50"
+                onClick={() => fetchUserJobs(false)}
+                className="flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-2xs hover:bg-slate-50 cursor-pointer"
               >
                 <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
                 <span>Refresh</span>
@@ -861,8 +914,42 @@ export const UserDashboardPage: React.FC = () => {
                         </div>
                       )}
 
-                      {/* Action Buttons: Edit, Cancel, Delete */}
-                      <div className="flex items-center gap-1.5 pt-1 sm:pt-0 sm:justify-end">
+                      {/* Action Buttons: Live Map, Edit, Cancel, Delete, Rating */}
+                      <div className="flex flex-wrap items-center gap-1.5 pt-1 sm:pt-0 sm:justify-end">
+                        <button
+                          type="button"
+                          onClick={() => setSelectedTrackingJob(job)}
+                          className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-emerald-200 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 font-bold text-xs transition cursor-pointer shadow-2xs"
+                          title="Track specialist and interactive route map"
+                        >
+                          <Navigation className="h-3.5 w-3.5" />
+                          <span>Live Map</span>
+                        </button>
+
+                        {job.status === 'COMPLETED' ? (
+                          ratingsStore[job.id] ? (
+                            <button
+                              type="button"
+                              onClick={() => handleOpenRatingModal(job)}
+                              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-800 text-xs font-bold shadow-2xs transition"
+                              title="Click to view or edit your review"
+                            >
+                              <Star className="h-3.5 w-3.5 fill-amber-400 text-amber-500" />
+                              <span>Rated {ratingsStore[job.id].rating}.0★</span>
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => handleOpenRatingModal(job)}
+                              className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white text-xs font-bold shadow-sm transition cursor-pointer"
+                              title="Rate your specialist"
+                            >
+                              <Star className="h-3.5 w-3.5 fill-white" />
+                              <span>Rate Specialist</span>
+                            </button>
+                          )
+                        ) : null}
+
                         <button
                           type="button"
                           onClick={() => handleOpenEditBooking(job)}
@@ -1112,6 +1199,170 @@ export const UserDashboardPage: React.FC = () => {
                   className="rounded-xl bg-brand-600 px-4 py-2 font-bold text-white shadow-md hover:bg-brand-500 disabled:opacity-50 cursor-pointer"
                 >
                   {savingBookingEdit ? 'Saving...' : 'Save Changes'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* LIVE TRACKING MAP MODAL */}
+      {selectedTrackingJob && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/80 backdrop-blur-sm p-4 animate-in fade-in duration-150">
+          <div className="w-full max-w-2xl">
+            {(() => {
+              const activeAssign = selectedTrackingJob.assignments?.find(
+                (a: any) =>
+                  ['SCHEDULED', 'EN_ROUTE', 'ARRIVED', 'IN_PROGRESS', 'COMPLETED'].includes(a.status)
+              );
+              return (
+                <LiveTrackingMap
+                  technicianName={activeAssign?.technician?.name || 'Field Specialist'}
+                  technicianPhone={activeAssign?.technician?.phone || '+1-555-0100'}
+                  technicianLat={activeAssign?.technician?.latitude}
+                  technicianLng={activeAssign?.technician?.longitude}
+                  destinationAddress={formatServiceZoneAddress(selectedTrackingJob.serviceZone)}
+                  destinationLat={selectedTrackingJob.latitude || 37.7749}
+                  destinationLng={selectedTrackingJob.longitude || -122.4194}
+                  jobStatus={selectedTrackingJob.status}
+                  jobDescription={selectedTrackingJob.description}
+                  onClose={() => setSelectedTrackingJob(null)}
+                  heightClass="h-[440px]"
+                />
+              );
+            })()}
+          </div>
+        </div>
+      )}
+
+      {/* CUSTOMER POST-SERVICE RATING MODAL */}
+      {ratingModalJob && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/80 backdrop-blur-sm p-4 animate-in fade-in duration-150">
+          <div className="w-full max-w-md rounded-2xl border border-slate-700/80 bg-slate-900 p-6 text-slate-200 shadow-2xl">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+              <div className="flex items-center gap-2">
+                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-amber-500/20 text-amber-400">
+                  <Star className="h-5 w-5 fill-amber-400" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-white">Rate Service & Specialist</h3>
+                  <p className="text-xs text-slate-400">Work Order #{ratingModalJob.id.slice(0, 8).toUpperCase()}</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setRatingModalJob(null)}
+                className="text-slate-400 hover:text-white"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveRating} className="space-y-4 pt-4">
+              {/* Star Selection */}
+              <div className="text-center space-y-1">
+                <div className="flex items-center justify-center gap-2">
+                  {[1, 2, 3, 4, 5].map((starVal) => {
+                    const isFilled = (ratingHover || ratingStars) >= starVal;
+                    return (
+                      <button
+                        key={starVal}
+                        type="button"
+                        onMouseEnter={() => setRatingHover(starVal)}
+                        onMouseLeave={() => setRatingHover(0)}
+                        onClick={() => setRatingStars(starVal)}
+                        className="p-1 text-slate-600 hover:scale-125 transition-transform"
+                      >
+                        <Star
+                          className={`h-8 w-8 ${
+                            isFilled
+                              ? 'text-amber-400 fill-amber-400'
+                              : 'text-slate-600'
+                          }`}
+                        />
+                      </button>
+                    );
+                  })}
+                </div>
+                <div className="text-xs font-bold text-amber-400 pt-1">
+                  {ratingStars === 5
+                    ? 'Outstanding (5.0)'
+                    : ratingStars === 4
+                    ? 'Very Good (4.0)'
+                    : ratingStars === 3
+                    ? 'Satisfactory (3.0)'
+                    : ratingStars === 2
+                    ? 'Needs Improvement (2.0)'
+                    : 'Unsatisfied (1.0)'}
+                </div>
+              </div>
+
+              {/* Quick Compliment Tags */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-400 mb-1.5">
+                  What did the specialist do well?
+                </label>
+                <div className="flex flex-wrap gap-1.5">
+                  {[
+                    '⚡ On-Time Arrival',
+                    '✨ Professional & Clean',
+                    '🛠️ Expert Diagnosis',
+                    '💬 Great Communication',
+                    '🧼 Spotless Cleanup',
+                    '⏱️ Fast Completion',
+                  ].map((tag) => {
+                    const isSelected = selectedFeedbackTags.includes(tag);
+                    return (
+                      <button
+                        key={tag}
+                        type="button"
+                        onClick={() => {
+                          if (isSelected) {
+                            setSelectedFeedbackTags(selectedFeedbackTags.filter((t) => t !== tag));
+                          } else {
+                            setSelectedFeedbackTags([...selectedFeedbackTags, tag]);
+                          }
+                        }}
+                        className={`px-2.5 py-1 rounded-lg text-xs font-medium border transition-colors ${
+                          isSelected
+                            ? 'bg-amber-500/20 border-amber-500 text-amber-300 font-bold'
+                            : 'border-slate-700 bg-slate-950/60 text-slate-400 hover:border-slate-600'
+                        }`}
+                      >
+                        {tag}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Written review */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-400 mb-1">
+                  Comments or Feedback (Optional)
+                </label>
+                <textarea
+                  rows={2}
+                  value={reviewNote}
+                  onChange={(e) => setReviewNote(e.target.value)}
+                  placeholder="Share details of your experience..."
+                  className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-white placeholder-slate-500 focus:border-brand-500 focus:outline-none"
+                />
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2 border-t border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setRatingModalJob(null)}
+                  className="rounded-xl border border-slate-700 px-4 py-2 text-xs font-semibold text-slate-300 hover:bg-slate-800"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="rounded-xl bg-amber-500 hover:bg-amber-400 px-4 py-2 text-xs font-bold text-slate-950 shadow-md transition-colors"
+                >
+                  Submit Review
                 </button>
               </div>
             </form>

@@ -12,6 +12,8 @@ import {
   XCircle,
   Clock,
   MapPin,
+  Download,
+  Printer,
 } from 'lucide-react';
 import { Card } from '../components/common/Card';
 import { Button } from '../components/common/Button';
@@ -259,6 +261,72 @@ export const SchedulingBoardPage: React.FC = () => {
   };
 
   /**
+   * Daily Schedule Export to CSV (RFC 4180 format)
+   */
+  const handleExportCsv = () => {
+    if (assignments.length === 0) {
+      alert('No scheduled assignments available to export for this shift.');
+      return;
+    }
+
+    const headers = [
+      'Job ID',
+      'Customer',
+      'Description',
+      'Specialist Name',
+      'Scheduled Start',
+      'Scheduled End',
+      'Travel Time (Mins)',
+      'Service Zone',
+      'Physical Street Address',
+      'Status',
+      'Priority',
+    ];
+
+    const rows = assignments.map((a) => {
+      const job = a.job;
+      const tech = a.technician || technicians.find((t) => t.id === a.technicianId);
+      const zone = job?.serviceZone || 'ZONE_NORTH';
+      const address = formatServiceZoneAddress(zone, true).replace(/"/g, '""');
+      const start = a.scheduledStart
+        ? new Date(a.scheduledStart).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        : '';
+      const end = a.scheduledEnd
+        ? new Date(a.scheduledEnd).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        : '';
+
+      return [
+        `"${a.jobId.slice(0, 8)}"`,
+        `"${(job?.customerName || 'Valued Client').replace(/"/g, '""')}"`,
+        `"${(job?.description || 'Service').replace(/"/g, '""')}"`,
+        `"${(tech?.name || 'Assigned Tech').replace(/"/g, '""')}"`,
+        `"${start}"`,
+        `"${end}"`,
+        `"${a.travelTime || 0}"`,
+        `"${zone}"`,
+        `"${address}"`,
+        `"${a.status}"`,
+        `"${job?.priority || 'MEDIUM'}"`,
+      ].join(',');
+    });
+
+    const csvContent = [headers.join(','), ...rows].join('\r\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', `DispatchGrid_Schedule_${currentDate}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
+  const handlePrintSchedule = () => {
+    window.print();
+  };
+
+  /**
    * Dispatches a single job to the nearest specialist (initiates live cascade)
    */
   const handleAutoDispatchSingle = async (jobId: string) => {
@@ -397,6 +465,28 @@ export const SchedulingBoardPage: React.FC = () => {
             <CheckCircle2 className="h-4 w-4 text-emerald-600" />
             <span>Autonomous Dispatch: ON</span>
           </span>
+
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleExportCsv}
+            className="gap-1.5 text-slate-700 hover:bg-slate-50 cursor-pointer"
+            title="Export shift schedule to CSV"
+          >
+            <Download className="h-4 w-4 text-emerald-600" />
+            <span>Export CSV</span>
+          </Button>
+
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handlePrintSchedule}
+            className="gap-1.5 text-slate-700 hover:bg-slate-50 cursor-pointer"
+            title="Print schedule or save as PDF"
+          >
+            <Printer className="h-4 w-4 text-blue-600" />
+            <span>Print Report</span>
+          </Button>
 
           <Button
             variant="outline"

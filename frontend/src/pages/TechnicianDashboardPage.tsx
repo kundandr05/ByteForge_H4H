@@ -21,6 +21,8 @@ import {
   Check,
   X,
   Radio,
+  Navigation,
+  Truck,
 } from 'lucide-react';
 import {
   techniciansApi,
@@ -30,9 +32,12 @@ import {
 import {
   Technician,
   Job,
+  JobStatus,
 } from '../types/dispatch';
 import { useAuth } from '../context/AuthContext';
 import { ensureArray } from '../utils/formatters';
+import { formatServiceZoneAddress } from '../utils/zoneAddress';
+import { LiveTrackingMap } from '../components/map/LiveTrackingMap';
 
 const ALL_SKILLS = [
   'HVAC',
@@ -82,6 +87,10 @@ export const TechnicianDashboardPage: React.FC = () => {
   const [editSkills, setEditSkills] = useState<string[]>([]);
   const [editZones, setEditZones] = useState<string[]>([]);
   const [saveSkillsLoading, setSaveSkillsLoading] = useState(false);
+
+  // Map modal & Lifecycle action states
+  const [selectedMapJob, setSelectedMapJob] = useState<Job | null>(null);
+  const [statusUpdatingJobId, setStatusUpdatingJobId] = useState<string | null>(null);
 
   const isOnline = tech?.availabilityStatus === 'AVAILABLE' || tech?.availabilityStatus === 'ON_SHIFT';
 
@@ -231,15 +240,25 @@ export const TechnicianDashboardPage: React.FC = () => {
     }
   };
 
-  // Mark Job Completed
-  const handleCompleteJob = async (jobId: string) => {
-    if (!confirm('Mark this service job as completed? This will update the client and calculate your final payout.')) return;
+  // Specialist Lifecycle Actions: [ Start Route ] -> [ Arrived at Location ] -> [ Start Repair ] -> [ Complete & Invoice ]
+  const handleLifecycleTransition = async (jobId: string, nextStatus: JobStatus) => {
+    setStatusUpdatingJobId(jobId);
     try {
-      await jobsApi.updateStatus(jobId, 'COMPLETED');
+      // Optimistic instant state update
+      setAssignedJobs((prev) =>
+        prev.map((j) => (j.id === jobId ? { ...j, status: nextStatus } : j))
+      );
+      await jobsApi.updateStatus(jobId, nextStatus);
       await fetchTechData();
-      if (tech?.id) await fetchEarnings(tech.id);
+      if (nextStatus === 'COMPLETED' && tech?.id) {
+        await fetchEarnings(tech.id);
+      }
     } catch (err: any) {
-      alert(`Failed to mark completed: ${err.message}`);
+      console.warn('Status transition error:', err);
+      alert(`Could not update status: ${err.message}`);
+      await fetchTechData();
+    } finally {
+      setStatusUpdatingJobId(null);
     }
   };
 
@@ -539,16 +558,115 @@ export const TechnicianDashboardPage: React.FC = () => {
                         <p className="text-xs text-slate-500 mt-0.5">Customer: {job.customerName}</p>
                       </div>
 
-                      <div className="flex items-center gap-2">
-                        {job.status !== 'COMPLETED' && (
+                      <div className="flex flex-wrap items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setSelectedMapJob(job)}
+                          className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 hover:bg-slate-100 px-3 py-2 text-xs font-bold text-slate-700 shadow-2xs transition-colors"
+                          title="View customer destination and route navigation"
+                        >
+                          <Navigation className="h-4 w-4 text-brand-600" />
+                          <span>Route Map</span>
+                        </button>
+
+                        {(job.status === 'ASSIGNED' || job.status === 'PENDING') && (
                           <button
                             type="button"
-                            onClick={() => handleCompleteJob(job.id)}
-                            className="flex items-center gap-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 px-3.5 py-2 text-xs font-bold text-white shadow-xs transition-colors"
+                            onClick={() => handleLifecycleTransition(job.id, 'EN_ROUTE')}
+                            disabled={statusUpdatingJobId === job.id}
+                            className="flex items-center gap-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 px-3.5 py-2 text-xs font-bold text-white shadow-xs transition-colors cursor-pointer"
                           >
-                            <CheckCircle2 className="h-4 w-4" /> Mark Complete
+                            <Truck className="h-4 w-4" /> Start Route
                           </button>
                         )}
+
+                        {job.status === 'EN_ROUTE' && (
+                          <button
+                            type="button"
+                            onClick={() => handleLifecycleTransition(job.id, 'ARRIVED')}
+                            disabled={statusUpdatingJobId === job.id}
+                            className="flex items-center gap-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 px-3.5 py-2 text-xs font-bold text-white shadow-xs transition-colors cursor-pointer animate-pulse"
+                          >
+                            <MapPin className="h-4 w-4" /> Arrived at Location
+                          </button>
+                        )}
+
+                        {job.status === 'ARRIVED' && (
+                          <button
+                            type="button"
+                            onClick={() => handleLifecycleTransition(job.id, 'IN_PROGRESS')}
+                            disabled={statusUpdatingJobId === job.id}
+                            className="flex items-center gap-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 px-3.5 py-2 text-xs font-bold text-white shadow-xs transition-colors cursor-pointer"
+                          >
+                            <Wrench className="h-4 w-4" /> Start Repair
+                          </button>
+                        )}
+
+                        {job.status === 'IN_PROGRESS' && (
+                          <button
+                            type="button"
+                            onClick={() => handleLifecycleTransition(job.id, 'COMPLETED')}
+                            disabled={statusUpdatingJobId === job.id}
+                            className="flex items-center gap-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 px-3.5 py-2 text-xs font-bold text-white shadow-xs transition-colors cursor-pointer"
+                          >
+                            <CheckCircle2 className="h-4 w-4" /> Complete & Invoice
+                          </button>
+                        )}
+
+                        {job.status === 'COMPLETED' && (
+                          <span className="flex items-center gap-1 text-xs font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-3 py-1.5 rounded-lg">
+                            <CheckCircle2 className="h-4 w-4 text-emerald-600" /> Completed & Invoiced
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="mt-2 text-xs text-slate-700 font-semibold flex items-center gap-1.5">
+                      <MapPin className="h-3.5 w-3.5 text-rose-500 shrink-0" />
+                      <span>Address: {formatServiceZoneAddress(job.serviceZone)}</span>
+                    </div>
+
+                    {/* Specialist Lifecycle Stepper Bar */}
+                    <div className="mt-3 pt-2.5 border-t border-slate-100">
+                      <div className="flex items-center justify-between gap-1 text-[10px] font-bold">
+                        {[
+                          { key: 'ASSIGNED', label: '1. Assigned' },
+                          { key: 'EN_ROUTE', label: '2. En Route' },
+                          { key: 'ARRIVED', label: '3. Arrived' },
+                          { key: 'IN_PROGRESS', label: '4. Repairing' },
+                          { key: 'COMPLETED', label: '5. Invoiced' },
+                        ].map((step) => {
+                          const order = ['PENDING', 'ASSIGNED', 'EN_ROUTE', 'ARRIVED', 'IN_PROGRESS', 'COMPLETED'];
+                          const currentIdx = order.indexOf(job.status);
+                          const thisStepIdx = order.indexOf(step.key);
+                          const isPastOrCurrent = currentIdx >= thisStepIdx;
+                          const isCurrent = job.status === step.key;
+
+                          return (
+                            <div key={step.key} className="flex flex-col items-center flex-1">
+                              <div
+                                className={`h-1.5 w-full rounded-full mb-1 transition-all ${
+                                  isCurrent
+                                    ? 'bg-brand-600'
+                                    : isPastOrCurrent
+                                    ? 'bg-emerald-500'
+                                    : 'bg-slate-200'
+                                }`}
+                              />
+                              <span
+                                className={`${
+                                  isCurrent
+                                    ? 'text-brand-600 font-extrabold'
+                                    : isPastOrCurrent
+                                    ? 'text-emerald-700'
+                                    : 'text-slate-400'
+                                }`}
+                              >
+                                {step.label}
+                              </span>
+                            </div>
+                          );
+                        })}
                       </div>
                     </div>
 
@@ -1081,6 +1199,27 @@ export const TechnicianDashboardPage: React.FC = () => {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* INTERACTIVE ROUTE MAP MODAL */}
+      {selectedMapJob && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/80 backdrop-blur-sm p-4 animate-in fade-in duration-150">
+          <div className="w-full max-w-2xl">
+            <LiveTrackingMap
+              technicianName={tech?.name || 'Field Specialist'}
+              technicianPhone={tech?.phone || '+1-555-0100'}
+              technicianLat={tech?.latitude}
+              technicianLng={tech?.longitude}
+              destinationAddress={formatServiceZoneAddress(selectedMapJob.serviceZone)}
+              destinationLat={selectedMapJob.latitude || 37.7749}
+              destinationLng={selectedMapJob.longitude || -122.4194}
+              jobStatus={selectedMapJob.status}
+              jobDescription={selectedMapJob.description}
+              onClose={() => setSelectedMapJob(null)}
+              heightClass="h-[440px]"
+            />
           </div>
         </div>
       )}

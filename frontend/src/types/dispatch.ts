@@ -1,7 +1,21 @@
 export type JobPriority = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
-export type JobStatus = 'PENDING' | 'ASSIGNED' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED' | 'UNASSIGNED';
+export type JobStatus =
+  | 'PENDING'
+  | 'ASSIGNED'
+  | 'EN_ROUTE'
+  | 'ARRIVED'
+  | 'IN_PROGRESS'
+  | 'COMPLETED'
+  | 'CANCELLED'
+  | 'UNASSIGNED';
 export type TechnicianAvailabilityStatus = 'AVAILABLE' | 'ON_SHIFT' | 'UNAVAILABLE' | 'OFF_DUTY';
-export type AssignmentStatus = 'SCHEDULED' | 'EN_ROUTE' | 'IN_PROGRESS' | 'COMPLETED' | 'CANCELLED';
+export type AssignmentStatus =
+  | 'SCHEDULED'
+  | 'EN_ROUTE'
+  | 'ARRIVED'
+  | 'IN_PROGRESS'
+  | 'COMPLETED'
+  | 'CANCELLED';
 export type DisruptionEventType =
   | 'TECHNICIAN_UNAVAILABLE'
   | 'URGENT_JOB_ARRIVAL'

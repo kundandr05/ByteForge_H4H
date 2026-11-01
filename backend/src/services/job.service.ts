@@ -8,6 +8,7 @@ import {
 } from '../validators/schemas';
 import { JobListQuery, PaginationMeta } from '../types';
 import { z } from 'zod';
+import { broadcastDispatchUpdate } from '../utils/dispatchEvents';
 
 export interface FormattedJob {
   id: string;
@@ -95,6 +96,7 @@ export class JobService {
       console.warn('[AutonomousDispatch] Automatic assignment trigger notice:', autoErr);
     }
 
+    broadcastDispatchUpdate('JOB_CREATED', { jobId: formatted.id });
     return formatted;
   }
 
@@ -247,7 +249,7 @@ export class JobService {
       throw AppError.badRequest('slaDeadline must be on or after earliestStart.', 'VALIDATION_ERROR');
     }
 
-    return await prisma.$transaction(async (tx) => {
+    const result = await prisma.$transaction(async (tx) => {
       const updateData: any = {};
       if (validated.customerName !== undefined) updateData.customerName = validated.customerName;
       if (validated.description !== undefined) updateData.description = validated.description;
@@ -280,6 +282,9 @@ export class JobService {
 
       return this.formatJob(updatedJob);
     });
+
+    broadcastDispatchUpdate('JOB_UPDATED', { jobId: id });
+    return result;
   }
 
   /**
@@ -294,11 +299,26 @@ export class JobService {
     // Validate transition against state machine rules
     validateJobStatusTransition(existingJob.status as JobStatus, newStatus);
 
-    return await prisma.$transaction(async (tx) => {
+    const formatted = await prisma.$transaction(async (tx) => {
       const updatedJob = await tx.job.update({
         where: { id },
         data: { status: newStatus },
       });
+
+      // Synchronize linked assignment status with technician lifecycle
+      const assignmentStatusMap: Record<string, string> = {
+        EN_ROUTE: 'EN_ROUTE',
+        ARRIVED: 'IN_PROGRESS',
+        IN_PROGRESS: 'IN_PROGRESS',
+        COMPLETED: 'COMPLETED',
+        CANCELLED: 'CANCELLED',
+      };
+      if (assignmentStatusMap[newStatus]) {
+        await tx.assignment.updateMany({
+          where: { jobId: id },
+          data: { status: assignmentStatusMap[newStatus] },
+        });
+      }
 
       // Transactional Audit Log
       await tx.auditLog.create({
@@ -314,6 +334,9 @@ export class JobService {
 
       return this.formatJob(updatedJob);
     });
+
+    broadcastDispatchUpdate('JOB_STATUS_CHANGED', { jobId: id, status: newStatus });
+    return formatted;
   }
 
   /**
@@ -331,7 +354,7 @@ export class JobService {
       throw AppError.notFound(`Job with ID '${id}' not found.`, 'JOB_NOT_FOUND');
     }
 
-    return await prisma.$transaction(async (tx) => {
+    const result = await prisma.$transaction(async (tx) => {
       // Automatically clean up assignments, run details, and disruption events linked to this job
       await tx.assignment.deleteMany({
         where: { jobId: id },
@@ -360,6 +383,9 @@ export class JobService {
 
       return { id, customerName: existingJob.customerName };
     });
+
+    broadcastDispatchUpdate('JOB_DELETED', { jobId: id });
+    return result;
   }
 }
 

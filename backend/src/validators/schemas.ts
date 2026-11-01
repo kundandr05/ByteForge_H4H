@@ -12,6 +12,8 @@ export type JobPriority = z.infer<typeof JobPriorityEnum>;
 export const JobStatusEnum = z.enum([
   'PENDING',
   'ASSIGNED',
+  'EN_ROUTE',
+  'ARRIVED',
   'IN_PROGRESS',
   'COMPLETED',
   'CANCELLED',
@@ -30,6 +32,7 @@ export type TechnicianAvailabilityStatus = z.infer<typeof TechnicianAvailability
 export const AssignmentStatusEnum = z.enum([
   'SCHEDULED',
   'EN_ROUTE',
+  'ARRIVED',
   'IN_PROGRESS',
   'COMPLETED',
   'CANCELLED',
@@ -69,7 +72,9 @@ export type DisruptionRecoveryStatus = z.infer<typeof DisruptionRecoveryStatusEn
 
 export const ALLOWED_JOB_TRANSITIONS: Record<JobStatus, JobStatus[]> = {
   PENDING: ['ASSIGNED', 'UNASSIGNED', 'CANCELLED'],
-  ASSIGNED: ['IN_PROGRESS', 'PENDING', 'CANCELLED', 'UNASSIGNED'],
+  ASSIGNED: ['EN_ROUTE', 'ARRIVED', 'IN_PROGRESS', 'PENDING', 'CANCELLED', 'UNASSIGNED'],
+  EN_ROUTE: ['ARRIVED', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED'],
+  ARRIVED: ['IN_PROGRESS', 'COMPLETED', 'CANCELLED'],
   IN_PROGRESS: ['COMPLETED', 'CANCELLED'],
   COMPLETED: [], // Terminal
   CANCELLED: [], // Terminal
