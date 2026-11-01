@@ -926,29 +926,28 @@ export const UserDashboardPage: React.FC = () => {
                           <span>Live Map</span>
                         </button>
 
-                        {job.status === 'COMPLETED' ? (
-                          ratingsStore[job.id] ? (
-                            <button
-                              type="button"
-                              onClick={() => handleOpenRatingModal(job)}
-                              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-800 text-xs font-bold shadow-2xs transition"
-                              title="Click to view or edit your review"
-                            >
-                              <Star className="h-3.5 w-3.5 fill-amber-400 text-amber-500" />
-                              <span>Rated {ratingsStore[job.id].rating}.0★</span>
-                            </button>
-                          ) : (
-                            <button
-                              type="button"
-                              onClick={() => handleOpenRatingModal(job)}
-                              className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white text-xs font-bold shadow-sm transition cursor-pointer"
-                              title="Rate your specialist"
-                            >
-                              <Star className="h-3.5 w-3.5 fill-white" />
-                              <span>Rate Specialist</span>
-                            </button>
-                          )
-                        ) : null}
+                        {/* 5-Star Rating & Review Button */}
+                        {ratingsStore[job.id] ? (
+                          <button
+                            type="button"
+                            onClick={() => handleOpenRatingModal(job)}
+                            className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-800 text-xs font-bold shadow-2xs transition cursor-pointer"
+                            title="Click to view or edit your review"
+                          >
+                            <Star className="h-3.5 w-3.5 fill-amber-400 text-amber-500" />
+                            <span>Rated {ratingsStore[job.id].rating}.0★</span>
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => handleOpenRatingModal(job)}
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white text-xs font-bold shadow-sm transition cursor-pointer"
+                            title="Rate your specialist and service"
+                          >
+                            <Star className="h-3.5 w-3.5 fill-white" />
+                            <span>Rate Specialist</span>
+                          </button>
+                        )}
 
                         <button
                           type="button"
