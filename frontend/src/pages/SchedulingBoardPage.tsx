@@ -7,6 +7,11 @@ import {
   AlertTriangle,
   Zap,
   Radio,
+  Edit3,
+  Trash2,
+  XCircle,
+  Clock,
+  MapPin,
 } from 'lucide-react';
 import { Card } from '../components/common/Card';
 import { Button } from '../components/common/Button';
@@ -16,6 +21,7 @@ import { PriorityBadge } from '../components/common/PriorityBadge';
 import { ExplainabilityModal } from '../components/explainability/ExplainabilityModal';
 import { schedulingApi, techniciansApi, jobsApi, autoDispatchApi } from '../services/dispatchApi';
 import { Technician, Job, Assignment, JobPriority } from '../types/dispatch';
+import { formatServiceZoneAddress, ZONE_ADDRESS_MAP } from '../utils/zoneAddress';
 
 const TIMELINE_START_HOUR = 8; // 08:00 UTC
 const TIMELINE_END_HOUR = 18; // 18:00 UTC
@@ -27,6 +33,77 @@ export const SchedulingBoardPage: React.FC = () => {
   const [generateModalOpen, setGenerateModalOpen] = useState(false);
   const [schedError, setSchedError] = useState<string | null>(null);
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
+
+  // Real-time live clock state
+  const [currentTime, setCurrentTime] = useState<string>(new Date().toLocaleTimeString());
+
+  // Edit Job State
+  const [editingJob, setEditingJob] = useState<Job | null>(null);
+  const [editFormData, setEditFormData] = useState({
+    customerName: '',
+    description: '',
+    priority: 'MEDIUM' as JobPriority,
+    serviceZone: 'ZONE_NORTH',
+    estimatedDuration: 60,
+  });
+  const [savingEdit, setSavingEdit] = useState(false);
+
+  useEffect(() => {
+    const clockTimer = setInterval(() => {
+      setCurrentTime(new Date().toLocaleTimeString());
+    }, 1000);
+    return () => clearInterval(clockTimer);
+  }, []);
+
+  const handleOpenEdit = (job: Job) => {
+    setEditingJob(job);
+    setEditFormData({
+      customerName: job.customerName,
+      description: job.description,
+      priority: job.priority,
+      serviceZone: job.serviceZone || 'ZONE_NORTH',
+      estimatedDuration: job.estimatedDuration || 60,
+    });
+  };
+
+  const handleSaveEdit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingJob) return;
+    setSavingEdit(true);
+    setSchedError(null);
+    try {
+      await jobsApi.update(editingJob.id, editFormData);
+      setAutoScheduleSuccess(`Job #${editingJob.id.slice(0, 8)} updated successfully!`);
+      setEditingJob(null);
+      await fetchData();
+    } catch (err: any) {
+      setSchedError(err.message || 'Failed to update job');
+    } finally {
+      setSavingEdit(false);
+    }
+  };
+
+  const handleDeleteJob = async (id: string) => {
+    if (!window.confirm('Are you sure you want to delete this work order?')) return;
+    try {
+      await jobsApi.delete(id);
+      setAutoScheduleSuccess('Job deleted successfully.');
+      await fetchData();
+    } catch (err: any) {
+      setSchedError(err.message || 'Failed to delete job.');
+    }
+  };
+
+  const handleCancelAssignment = async (id: string) => {
+    if (!window.confirm('Cancel this work order and mark as CANCELLED?')) return;
+    try {
+      await jobsApi.updateStatus(id, 'CANCELLED');
+      setAutoScheduleSuccess('Work order marked as CANCELLED.');
+      await fetchData();
+    } catch (err: any) {
+      setSchedError(err.message || 'Failed to cancel work order.');
+    }
+  };
 
   // Automated Allocation & Cascading Dispatch states
   const [autoScheduling, setAutoScheduling] = useState(false);
@@ -268,6 +345,12 @@ export const SchedulingBoardPage: React.FC = () => {
           </p>
         </div>
         <div className="flex items-center gap-2.5">
+          {/* Real-time Live Operations Clock */}
+          <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs font-mono font-bold shadow-2xs">
+            <Clock className="h-3.5 w-3.5 text-emerald-600 animate-pulse" />
+            <span>Live Clock: {currentTime}</span>
+          </div>
+
           {/* Date Picker Switcher */}
           <div className="flex items-center rounded-lg border border-slate-200 bg-white p-1 text-xs">
             <button
@@ -541,8 +624,12 @@ export const SchedulingBoardPage: React.FC = () => {
                     </div>
                     <p className="text-[11px] text-slate-500 line-clamp-2">{job.description}</p>
                     <div className="flex items-center justify-between text-[10px] text-slate-400 pt-1.5 border-t border-slate-200/60">
-                      <span>{job.serviceZone}</span>
-                      <div className="flex items-center gap-1.5">
+                      <span className="flex items-center gap-1 font-medium text-slate-600 truncate max-w-[130px]" title={formatServiceZoneAddress(job.serviceZone)}>
+                        <MapPin className="h-3 w-3 text-slate-400 shrink-0" />
+                        <span className="truncate">{formatServiceZoneAddress(job.serviceZone, true)}</span>
+                      </span>
+                      <div className="flex items-center gap-1 shrink-0">
+                        {/* Auto-Dispatch Button (Unchanged) */}
                         <button
                           type="button"
                           disabled={dispatchingJobs[job.id]}
@@ -556,13 +643,50 @@ export const SchedulingBoardPage: React.FC = () => {
                           <Zap className="h-3 w-3" />
                           <span>{dispatchingJobs[job.id] ? 'Routing...' : 'Auto-Dispatch'}</span>
                         </button>
-                        <span
+
+                        {/* Explain Button */}
+                        <button
+                          type="button"
                           onClick={() => setSelectedJobId(job.id)}
-                          className="flex items-center gap-1 text-brand-600 font-medium hover:underline cursor-pointer"
+                          className="flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-slate-100 hover:bg-slate-200 text-brand-700 font-semibold text-[10px] transition cursor-pointer"
+                          title="AI Explainability"
                         >
-                          <Sparkles className="h-3 w-3" />
-                          Explain
-                        </span>
+                          <Sparkles className="h-3 w-3 text-brand-600" />
+                          <span>Explain</span>
+                        </button>
+
+                        {/* Edit Button */}
+                        <button
+                          type="button"
+                          title="Edit Job Details"
+                          onClick={() => handleOpenEdit(job)}
+                          className="flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-blue-50 hover:bg-blue-100 text-blue-700 font-semibold text-[10px] transition cursor-pointer"
+                        >
+                          <Edit3 className="h-3 w-3" />
+                          <span>Edit</span>
+                        </button>
+
+                        {/* Cancel Button */}
+                        <button
+                          type="button"
+                          title="Cancel Job"
+                          onClick={() => handleCancelAssignment(job.id)}
+                          className="flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-amber-50 hover:bg-amber-100 text-amber-700 font-semibold text-[10px] transition cursor-pointer"
+                        >
+                          <XCircle className="h-3 w-3" />
+                          <span>Cancel</span>
+                        </button>
+
+                        {/* Delete Button */}
+                        <button
+                          type="button"
+                          title="Delete Job"
+                          onClick={() => handleDeleteJob(job.id)}
+                          className="flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-rose-50 hover:bg-rose-100 text-rose-700 font-semibold text-[10px] transition cursor-pointer"
+                        >
+                          <Trash2 className="h-3 w-3" />
+                          <span>Delete</span>
+                        </button>
                       </div>
                     </div>
 
@@ -703,6 +827,96 @@ export const SchedulingBoardPage: React.FC = () => {
           </div>
         </div>
       </Modal>
+      {/* Edit Job Modal */}
+      {editingJob && (
+        <Modal
+          isOpen={!!editingJob}
+          onClose={() => setEditingJob(null)}
+          title={`Edit Work Order #${editingJob.id.slice(0, 8)}`}
+          subtitle="Update customer details, priority, and physical service location"
+          maxWidth="md"
+        >
+          <form onSubmit={handleSaveEdit} className="space-y-4 text-xs">
+            <div>
+              <label className="block font-semibold text-slate-700 mb-1">Customer Name</label>
+              <input
+                type="text"
+                required
+                value={editFormData.customerName}
+                onChange={(e) => setEditFormData({ ...editFormData, customerName: e.target.value })}
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900 focus:border-brand-500 focus:outline-none"
+              />
+            </div>
+
+            <div>
+              <label className="block font-semibold text-slate-700 mb-1">Job Description</label>
+              <textarea
+                rows={2}
+                required
+                value={editFormData.description}
+                onChange={(e) => setEditFormData({ ...editFormData, description: e.target.value })}
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900 focus:border-brand-500 focus:outline-none"
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">Priority</label>
+                <select
+                  value={editFormData.priority}
+                  onChange={(e) => setEditFormData({ ...editFormData, priority: e.target.value as JobPriority })}
+                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900 focus:border-brand-500 focus:outline-none"
+                >
+                  <option value="LOW">LOW</option>
+                  <option value="MEDIUM">MEDIUM</option>
+                  <option value="HIGH">HIGH</option>
+                  <option value="CRITICAL">CRITICAL</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">Est. Duration (Mins)</label>
+                <input
+                  type="number"
+                  min={15}
+                  max={480}
+                  step={15}
+                  value={editFormData.estimatedDuration}
+                  onChange={(e) => setEditFormData({ ...editFormData, estimatedDuration: Number(e.target.value) })}
+                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900 focus:border-brand-500 focus:outline-none"
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="block font-semibold text-slate-700 mb-1">Service Zone (Physical Address)</label>
+              <select
+                value={editFormData.serviceZone}
+                onChange={(e) => setEditFormData({ ...editFormData, serviceZone: e.target.value })}
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-slate-900 focus:border-brand-500 focus:outline-none"
+              >
+                {Object.entries(ZONE_ADDRESS_MAP).map(([zoneKey, info]) => (
+                  <option key={zoneKey} value={zoneKey}>
+                    {info.address} ({info.label})
+                  </option>
+                ))}
+              </select>
+              <p className="text-[10px] text-slate-500 mt-1">
+                Selected Address: {formatServiceZoneAddress(editFormData.serviceZone)}
+              </p>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-3 border-t border-slate-100">
+              <Button type="button" variant="outline" onClick={() => setEditingJob(null)} disabled={savingEdit}>
+                Cancel
+              </Button>
+              <Button type="submit" variant="primary" isLoading={savingEdit}>
+                Save Changes
+              </Button>
+            </div>
+          </form>
+        </Modal>
+      )}
     </div>
   );
 };

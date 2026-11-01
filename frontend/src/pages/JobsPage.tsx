@@ -1,3 +1,4 @@
+import { formatServiceZoneAddress } from '../utils/zoneAddress';
 import React, { useEffect, useState } from 'react';
 import {
   Search,
@@ -448,7 +449,7 @@ export const JobsPage: React.FC = () => {
 
                       {/* Zone */}
                       <td className="px-4 py-3 whitespace-nowrap text-slate-700">
-                        <span className="font-medium">{job.serviceZone}</span>
+                        <span className="font-semibold text-xs block text-slate-900">{formatServiceZoneAddress(job.serviceZone, true)}</span>
                         <div className="text-[10px] text-slate-400">
                           {job.latitude.toFixed(2)}, {job.longitude.toFixed(2)}
                         </div>
@@ -647,7 +648,7 @@ export const JobsPage: React.FC = () => {
               >
                 {SERVICE_ZONES.map((z) => (
                   <option key={z} value={z}>
-                    {z}
+                    {formatServiceZoneAddress(z)}
                   </option>
                 ))}
               </select>

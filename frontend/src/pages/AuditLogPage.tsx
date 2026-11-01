@@ -5,7 +5,6 @@ import {
   RefreshCw,
   Sparkles,
   Code,
-  ArrowRight,
   ShieldCheck,
   CheckCircle2,
 } from 'lucide-react';
