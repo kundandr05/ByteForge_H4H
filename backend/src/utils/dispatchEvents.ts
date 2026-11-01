@@ -12,3 +12,4 @@ export function broadcastDispatchUpdate(type: string, payload?: any) {
     timestamp: new Date().toISOString(),
   });
 }
+
