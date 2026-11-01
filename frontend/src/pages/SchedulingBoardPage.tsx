@@ -90,7 +90,7 @@ export const SchedulingBoardPage: React.FC = () => {
   };
 
   const handleDeleteJob = async (id: string) => {
-    if (!window.confirm('Are you sure you want to delete this work order?')) return;
+    
     try {
       // Optimistic removal
       setUnassignedJobs((prev) => prev.filter((j) => j.id !== id));
@@ -105,7 +105,7 @@ export const SchedulingBoardPage: React.FC = () => {
   };
 
   const handleCancelAssignment = async (id: string) => {
-    if (!window.confirm('Cancel this work order and mark as CANCELLED?')) return;
+    
     try {
       // Optimistic status update
       setUnassignedJobs((prev) =>

@@ -362,7 +362,6 @@ export const UserDashboardPage: React.FC = () => {
   };
 
   const handleCancelBooking = async (jobId: string) => {
-    if (!window.confirm('Are you sure you want to cancel this appointment?')) return;
     try {
       // Optimistic instant status change
       setJobs((prev) =>
@@ -372,13 +371,12 @@ export const UserDashboardPage: React.FC = () => {
       setBookingSuccessAlert('Appointment status updated to CANCELLED.');
       await fetchUserJobs();
     } catch (err: any) {
-      alert(err.message || 'Failed to cancel appointment');
+      console.warn('Cancel error:', err);
       await fetchUserJobs();
     }
   };
 
   const handleDeleteBooking = async (jobId: string) => {
-    if (!window.confirm('Are you sure you want to permanently delete this booking?')) return;
     try {
       // Optimistic instant removal from list
       setJobs((prev) => prev.filter((j) => j.id !== jobId));
@@ -386,7 +384,7 @@ export const UserDashboardPage: React.FC = () => {
       setBookingSuccessAlert('Booking deleted successfully.');
       await fetchUserJobs();
     } catch (err: any) {
-      alert(err.message || 'Failed to delete booking');
+      console.warn('Delete error:', err);
       await fetchUserJobs();
     }
   };
@@ -421,7 +419,7 @@ export const UserDashboardPage: React.FC = () => {
           job.customerName.toLowerCase().includes(currentCustomerName)
       );
 
-      setJobs(filtered.length > 0 ? filtered : res.data.slice(0, 4));
+      setJobs(filtered);
     } catch (err) {
       console.warn('Failed to load user appointments:', err);
     } finally {
@@ -906,7 +904,7 @@ export const UserDashboardPage: React.FC = () => {
 
       {/* QUICK BOOKING MODAL */}
       {bookingModalService && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 backdrop-blur-xs p-4">
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/80 backdrop-blur-sm p-4 animate-in fade-in duration-150">
           <div className="w-full max-w-md rounded-2xl border border-slate-800 bg-slate-900 p-6 text-slate-200 shadow-2xl">
             <div className="flex items-center justify-between pb-3 border-b border-slate-800">
               <div>
