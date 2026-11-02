@@ -520,9 +520,7 @@ export const UserDashboardPage: React.FC = () => {
     return () => clearInterval(syncTimer);
   }, [fetchUserJobs]);
 
-  const activeJobs = jobs.filter((j) =>
-    ['PENDING', 'ASSIGNED', 'IN_PROGRESS'].includes(j.status)
-  );
+
 
   // Handle instant one-click booking of a specific service
   const handleConfirmDirectBooking = async (e: React.FormEvent) => {
@@ -608,9 +606,9 @@ export const UserDashboardPage: React.FC = () => {
           >
             <Calendar className="h-3.5 w-3.5" />
             <span>My Bookings</span>
-            {activeJobs.length > 0 && (
+            {jobs.length > 0 && (
               <span className="rounded-full bg-amber-400 text-slate-950 px-1.5 py-0.2 text-[10px] font-extrabold">
-                {activeJobs.length}
+                {jobs.length}
               </span>
             )}
           </button>
