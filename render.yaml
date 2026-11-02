@@ -13,3 +13,4 @@ services:
         value: "*"
       - key: DATABASE_URL
         value: "file:./dev.db"
+
