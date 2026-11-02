@@ -8,7 +8,7 @@ import {
 } from '../validators/schemas';
 import { JobListQuery, PaginationMeta } from '../types';
 import { z } from 'zod';
-import { broadcastDispatchUpdate } from '../utils/dispatchEvents';
+import { dispatchEvents, broadcastDispatchUpdate } from '../utils/dispatchEvents';
 
 export interface FormattedJob {
   id: string;
@@ -96,7 +96,11 @@ export class JobService {
       console.warn('[AutonomousDispatch] Automatic assignment trigger notice:', autoErr);
     }
 
-    broadcastDispatchUpdate('JOB_CREATED', { jobId: formatted.id });
+    dispatchEvents.publish('JOB_CREATED', {
+      entityId: formatted.id,
+      targetCustomerName: formatted.customerName,
+      payload: formatted,
+    });
     return formatted;
   }
 
@@ -283,7 +287,11 @@ export class JobService {
       return this.formatJob(updatedJob);
     });
 
-    broadcastDispatchUpdate('JOB_UPDATED', { jobId: id });
+    dispatchEvents.publish('JOB_UPDATED', {
+      entityId: id,
+      targetCustomerName: result.customerName,
+      payload: result,
+    });
     return result;
   }
 
@@ -335,7 +343,43 @@ export class JobService {
       return this.formatJob(updatedJob);
     });
 
-    broadcastDispatchUpdate('JOB_STATUS_CHANGED', { jobId: id, status: newStatus });
+    // Publish specific operational lifecycle event
+    if (newStatus === 'EN_ROUTE') {
+      dispatchEvents.publish('DISPATCH_STARTED', {
+        entityId: id,
+        targetCustomerName: formatted.customerName,
+        payload: { jobId: id, status: newStatus },
+      });
+    } else if (newStatus === 'ARRIVED') {
+      dispatchEvents.publish('TECHNICIAN_ARRIVED', {
+        entityId: id,
+        targetCustomerName: formatted.customerName,
+        payload: { jobId: id, status: newStatus },
+      });
+    } else if (newStatus === 'IN_PROGRESS') {
+      dispatchEvents.publish('REPAIR_STARTED', {
+        entityId: id,
+        targetCustomerName: formatted.customerName,
+        payload: { jobId: id, status: newStatus },
+      });
+    } else if (newStatus === 'COMPLETED') {
+      dispatchEvents.publish('JOB_COMPLETED', {
+        entityId: id,
+        targetCustomerName: formatted.customerName,
+        payload: { jobId: id, status: newStatus },
+      });
+    }
+
+    dispatchEvents.publish('JOB_UPDATED', {
+      entityId: id,
+      targetCustomerName: formatted.customerName,
+      payload: formatted,
+    });
+    dispatchEvents.publish('SCHEDULE_UPDATED', {
+      entityId: id,
+      payload: { jobId: id, status: newStatus },
+    });
+
     return formatted;
   }
 
@@ -384,7 +428,15 @@ export class JobService {
       return { id, customerName: existingJob.customerName };
     });
 
-    broadcastDispatchUpdate('JOB_DELETED', { jobId: id });
+    dispatchEvents.publish('JOB_UPDATED', {
+      entityId: id,
+      targetCustomerName: existingJob.customerName,
+      payload: { jobId: id, deleted: true, status: 'CANCELLED' },
+    });
+    dispatchEvents.publish('SCHEDULE_UPDATED', {
+      entityId: id,
+      payload: { jobId: id, deleted: true },
+    });
     return result;
   }
 }

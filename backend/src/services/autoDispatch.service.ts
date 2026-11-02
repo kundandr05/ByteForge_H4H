@@ -2,6 +2,7 @@ import { prisma } from '../config/prisma';
 import { calculateTravelEstimate } from '../scheduling/travel-calculator';
 import { AppError } from '../utils/appError';
 import { logger } from '../utils/logger';
+import { dispatchEvents } from '../utils/dispatchEvents';
 
 export interface TechnicianCandidate {
   technicianId: string;
@@ -220,6 +221,21 @@ export class AutoDispatchService {
     };
 
     this.activeCascades.set(job.id, cascadeState);
+
+    dispatchEvents.publish('DISPATCH_STARTED', {
+      entityId: job.id,
+      payload: {
+        jobId: job.id,
+        customerName: job.customerName,
+        nearestTechnicianId: nearestCandidate.technicianId,
+        nearestTechnicianName: nearestCandidate.technicianName,
+        distanceKm: nearestCandidate.distanceKm,
+        travelTimeMinutes: nearestCandidate.travelTimeMinutes,
+        payout,
+      },
+      targetTechnicianId: nearestCandidate.technicianId,
+      targetCustomerName: job.customerName,
+    });
 
     logger.info(
       `[AUTO_DISPATCH] Job ${job.id} dispatched to nearest specialist: ${nearestCandidate.technicianName} (${nearestCandidate.distanceKm} km away)`

@@ -38,6 +38,11 @@ import { useAuth } from '../context/AuthContext';
 import { ensureArray } from '../utils/formatters';
 import { formatServiceZoneAddress } from '../utils/zoneAddress';
 import { LiveTrackingMap } from '../components/map/LiveTrackingMap';
+import { useDispatchStream } from '../hooks/useDispatchStream';
+import { useOfflineSync } from '../hooks/useOfflineSync';
+import { offlineDb } from '../utils/offlineDb';
+import { RealtimeStatusBadge } from '../components/common/RealtimeStatusBadge';
+import { WifiOff, Database } from 'lucide-react';
 
 const ALL_SKILLS = [
   'HVAC',
@@ -60,11 +65,34 @@ const ALL_ZONES = [
 
 export const TechnicianDashboardPage: React.FC = () => {
   const { user, updateUser } = useAuth();
+  const { isOnline: networkOnline, syncState, pendingCount, lastSyncedAt, syncNow, executeAction } = useOfflineSync();
+  const [isCachedData, setIsCachedData] = useState(false);
+  const [syncNotice, setSyncNotice] = useState<string | null>(null);
   const [searchParams, setSearchParams] = useSearchParams();
   const activeTab = searchParams.get('tab') || 'schedule';
 
   const [tech, setTech] = useState<Technician | null>(null);
   const [assignedJobs, setAssignedJobs] = useState<Job[]>([]);
+
+  // Real-time SSE stream hook for technician console
+  const { status: streamStatus } = useDispatchStream({
+    enabled: networkOnline,
+    onEvent: (evt) => {
+      if (!evt) return;
+      if (
+        evt.type === 'DISPATCH_STARTED' ||
+        evt.type === 'TECHNICIAN_ASSIGNED' ||
+        evt.type === 'JOB_REASSIGNED' ||
+        evt.type === 'SCHEDULE_UPDATED' ||
+        evt.type === 'JOB_UPDATED'
+      ) {
+        if (tech?.id) {
+          pollActiveOffer(tech.id);
+          fetchTechData();
+        }
+      }
+    },
+  });
   const [loading, setLoading] = useState(true);
   const [statusUpdating, setStatusUpdating] = useState(false);
   const [showEditSkills, setShowEditSkills] = useState(false);
@@ -97,6 +125,26 @@ export const TechnicianDashboardPage: React.FC = () => {
   const fetchTechData = useCallback(async () => {
     setLoading(true);
     try {
+      if (!navigator.onLine) {
+        const cachedJobs = await offlineDb.getCachedWorkOrders(user.id);
+        const cachedTechs = await offlineDb.getCachedTechnicians();
+        const found = cachedTechs.find(
+          (t) =>
+            t.id === user.technicianId ||
+            t.name.toLowerCase() === user.name.toLowerCase()
+        ) || cachedTechs[0];
+        if (found) {
+          setTech(found);
+          setEditSkills(ensureArray(found.skills));
+          setEditZones(ensureArray(found.serviceZones));
+        }
+        if (cachedJobs.length > 0) {
+          setAssignedJobs(cachedJobs as any);
+        }
+        setIsCachedData(true);
+        return;
+      }
+
       let currentTech: Technician | null = null;
       if (user.technicianId) {
         const res = await techniciansApi.get(user.technicianId);
@@ -109,6 +157,7 @@ export const TechnicianDashboardPage: React.FC = () => {
               t.name.toLowerCase() === user.name.toLowerCase() ||
               t.email.toLowerCase() === user.email.toLowerCase()
           ) || listRes.data[0];
+        offlineDb.cacheTechnicians(listRes.data).catch(() => {});
       }
 
       if (currentTech) {
@@ -121,13 +170,21 @@ export const TechnicianDashboardPage: React.FC = () => {
           j.assignments?.some((a: any) => a.technicianId === currentTech?.id)
         );
         setAssignedJobs(assigned);
+        setIsCachedData(false);
+
+        offlineDb.cacheWorkOrders(user.id, assigned).catch(() => {});
       }
     } catch (err) {
-      console.warn('Failed to load technician data:', err);
+      console.warn('Failed to load technician data, falling back to cache:', err);
+      const cachedJobs = await offlineDb.getCachedWorkOrders(user.id);
+      if (cachedJobs.length > 0) {
+        setAssignedJobs(cachedJobs as any);
+        setIsCachedData(true);
+      }
     } finally {
       setLoading(false);
     }
-  }, [user.technicianId, user.name, user.email]);
+  }, [user.technicianId, user.name, user.email, user.id]);
 
   // Fetch earnings
   const fetchEarnings = useCallback(async (techId: string) => {
@@ -179,10 +236,13 @@ export const TechnicianDashboardPage: React.FC = () => {
       fetchEarnings(tech.id);
       pollActiveOffer(tech.id);
 
-      // Periodic poll
+      // Replaced 3-second polling with real-time SSE stream events.
+      // 30s slow heartbeat fallback for resilient edge recovery.
       const interval = setInterval(() => {
-        pollActiveOffer(tech.id);
-      }, 3000);
+        if (navigator.onLine) {
+          pollActiveOffer(tech.id);
+        }
+      }, 30000);
 
       return () => clearInterval(interval);
     }
@@ -248,10 +308,17 @@ export const TechnicianDashboardPage: React.FC = () => {
       setAssignedJobs((prev) =>
         prev.map((j) => (j.id === jobId ? { ...j, status: nextStatus } : j))
       );
-      await jobsApi.updateStatus(jobId, nextStatus);
-      await fetchTechData();
-      if (nextStatus === 'COMPLETED' && tech?.id) {
-        await fetchEarnings(tech.id);
+
+      // Safe offline-first execution via sync manager
+      const opResult = await executeAction(jobId, 'UPDATE_STATUS', { status: nextStatus });
+      if (opResult.queued) {
+        setSyncNotice(`Job #${jobId.slice(0, 8)} status marked as ${nextStatus} locally. Queued for background synchronization.`);
+        setTimeout(() => setSyncNotice(null), 5000);
+      } else {
+        await fetchTechData();
+        if (nextStatus === 'COMPLETED' && tech?.id) {
+          await fetchEarnings(tech.id);
+        }
       }
     } catch (err: any) {
       console.warn('Status transition error:', err);
@@ -295,6 +362,55 @@ export const TechnicianDashboardPage: React.FC = () => {
 
   return (
     <div className="space-y-6 pb-20">
+      {/* Offline Notice Banner */}
+      {(!networkOnline || isCachedData) && (
+        <div className="rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs">
+          <div className="flex items-center gap-3">
+            <div className="p-2 rounded-lg bg-amber-100 text-amber-700">
+              <WifiOff className="h-5 w-5" />
+            </div>
+            <div>
+              <div className="font-bold text-amber-900 flex items-center gap-2">
+                <span>Field Specialist Offline PWA Mode Active</span>
+                <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-amber-200/80 text-amber-800">
+                  Cached Work Orders
+                </span>
+              </div>
+              <p className="text-xs text-amber-800 mt-0.5">
+                You can continue to view appointments, mark arrival, and record repair completion offline. All actions will automatically synchronize when connection resumes.
+                {lastSyncedAt ? ` Last synced at ${new Date(lastSyncedAt).toLocaleTimeString()}.` : ''}
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <RealtimeStatusBadge
+              streamStatus={streamStatus}
+              isOnline={networkOnline}
+              syncState={syncState}
+              pendingCount={pendingCount}
+              lastSyncedAt={lastSyncedAt}
+              onSyncNow={syncNow}
+            />
+            {pendingCount > 0 && (
+              <button
+                onClick={syncNow}
+                disabled={syncState === 'SYNCING'}
+                className="self-start sm:self-auto shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white font-semibold text-xs transition shadow-xs"
+              >
+                <Database className="h-3.5 w-3.5" />
+                <span>Sync {pendingCount} Updates</span>
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {syncNotice && (
+        <div className="rounded-lg border border-blue-300 bg-blue-50 px-4 py-2.5 text-xs text-blue-900 font-medium">
+          {syncNotice}
+        </div>
+      )}
+
       {/* 1. Header Banner & Prominent Online / Offline Toggle */}
       <div className="relative overflow-hidden rounded-2xl bg-gradient-to-r from-slate-900 via-slate-800 to-emerald-950 p-6 sm:p-8 text-white shadow-xl border border-slate-800">
         <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-6">

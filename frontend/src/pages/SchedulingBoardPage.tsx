@@ -24,12 +24,23 @@ import { ExplainabilityModal } from '../components/explainability/Explainability
 import { schedulingApi, techniciansApi, jobsApi, autoDispatchApi } from '../services/dispatchApi';
 import { Technician, Job, Assignment, JobPriority } from '../types/dispatch';
 import { formatServiceZoneAddress, ZONE_ADDRESS_MAP } from '../utils/zoneAddress';
+import { useAuth } from '../context/AuthContext';
+import { useDispatchStream } from '../hooks/useDispatchStream';
+import { useOfflineSync } from '../hooks/useOfflineSync';
+import { offlineDb } from '../utils/offlineDb';
+import { RealtimeStatusBadge } from '../components/common/RealtimeStatusBadge';
+import { WifiOff, Database } from 'lucide-react';
 
 const TIMELINE_START_HOUR = 8; // 08:00 UTC
 const TIMELINE_END_HOUR = 18; // 18:00 UTC
 const TOTAL_TIMELINE_HOURS = TIMELINE_END_HOUR - TIMELINE_START_HOUR;
 
 export const SchedulingBoardPage: React.FC = () => {
+  const { user } = useAuth();
+  const { isOnline, syncState, pendingCount, lastSyncedAt, syncNow } = useOfflineSync();
+  const [isCachedData, setIsCachedData] = useState(false);
+  const [cachedSyncTime, setCachedSyncTime] = useState<string | null>(null);
+
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
   const [generateModalOpen, setGenerateModalOpen] = useState(false);
@@ -56,6 +67,15 @@ export const SchedulingBoardPage: React.FC = () => {
     }, 1000);
     return () => clearInterval(clockTimer);
   }, []);
+
+  // Subscribe to real-time events via SSE hook - replaces polling!
+  const { status: streamStatus } = useDispatchStream({
+    enabled: isOnline,
+    onEvent: (_event) => {
+      // Instant operational reactivity on SSE event
+      fetchData(false);
+    },
+  });
 
   const handleOpenEdit = (job: Job) => {
     setEditingJob(job);
@@ -173,9 +193,28 @@ export const SchedulingBoardPage: React.FC = () => {
     }
   };
 
-  const fetchData = async () => {
-    setLoading(true);
+  const fetchData = async (showLoadingSpinner = true) => {
+    if (showLoadingSpinner) setLoading(true);
     try {
+      if (!navigator.onLine) {
+        // Load from IndexedDB
+        const cachedSched = await offlineDb.getCachedSchedule(user.id, currentDate);
+        const cachedTechs = await offlineDb.getCachedTechnicians();
+        const cachedJobs = await offlineDb.getCachedWorkOrders(user.id);
+        if (cachedSched || cachedJobs.length > 0) {
+          if (cachedTechs.length > 0) setTechnicians(cachedTechs);
+          if (cachedSched) {
+            setAssignments(cachedSched.assignments || []);
+            setCachedSyncTime(cachedSched.lastSyncedAt);
+          }
+          if (cachedJobs.length > 0) {
+            setUnassignedJobs(cachedJobs.filter((j) => j.status === 'PENDING' || j.status === 'UNASSIGNED') as any);
+          }
+          setIsCachedData(true);
+          return;
+        }
+      }
+
       const [techsRes, currentSchedRes, unassignedJobsRes, pendingJobsRes] = await Promise.all([
         techniciansApi.list({ limit: 50 }),
         schedulingApi.getCurrent().catch(() => ({ data: { assignments: [] } })),
@@ -183,11 +222,20 @@ export const SchedulingBoardPage: React.FC = () => {
         jobsApi.list({ status: 'PENDING', limit: 50 }).catch(() => ({ data: [] })),
       ]);
 
-      setTechnicians(techsRes.data || []);
-      setAssignments(currentSchedRes.data?.assignments || []);
+      const loadedTechs = techsRes.data || [];
+      const loadedAssignments = currentSchedRes.data?.assignments || [];
+      setTechnicians(loadedTechs);
+      setAssignments(loadedAssignments);
+
       const allUnassigned = [...(unassignedJobsRes.data || []), ...(pendingJobsRes.data || [])];
       const uniqueUnassigned = Array.from(new Map(allUnassigned.map((j) => [j.id, j])).values());
       setUnassignedJobs(uniqueUnassigned);
+      setIsCachedData(false);
+
+      // Cache to IndexedDB for offline PWA persistence
+      offlineDb.cacheSchedule(user.id, currentDate, loadedAssignments, uniqueUnassigned.length).catch(() => {});
+      offlineDb.cacheTechnicians(loadedTechs).catch(() => {});
+      offlineDb.cacheWorkOrders(user.id, [...uniqueUnassigned, ...loadedAssignments.map((a: any) => a.job).filter(Boolean)]).catch(() => {});
 
       // Autonomous Zero-Click Execution: Automatically dispatch any unassigned work orders immediately
       if (uniqueUnassigned.length > 0) {
@@ -196,7 +244,21 @@ export const SchedulingBoardPage: React.FC = () => {
         }, 150);
       }
     } catch (err) {
-      console.error('Failed to load scheduling timeline', err);
+      console.warn('Network fetch unavailable, attempting IndexedDB offline cache:', err);
+      const cachedSched = await offlineDb.getCachedSchedule(user.id, currentDate);
+      const cachedTechs = await offlineDb.getCachedTechnicians();
+      const cachedJobs = await offlineDb.getCachedWorkOrders(user.id);
+      if (cachedSched || cachedJobs.length > 0) {
+        if (cachedTechs.length > 0) setTechnicians(cachedTechs);
+        if (cachedSched) {
+          setAssignments(cachedSched.assignments || []);
+          setCachedSyncTime(cachedSched.lastSyncedAt);
+        }
+        if (cachedJobs.length > 0) {
+          setUnassignedJobs(cachedJobs.filter((j) => j.status === 'PENDING' || j.status === 'UNASSIGNED') as any);
+        }
+        setIsCachedData(true);
+      }
     } finally {
       setLoading(false);
     }
@@ -205,12 +267,15 @@ export const SchedulingBoardPage: React.FC = () => {
   useEffect(() => {
     fetchData();
 
-    // Autonomous background sync: keeps schedule updated and auto-allocates any incoming bookings every 6s
-    const pollInterval = setInterval(() => {
-      fetchData();
-    }, 6000);
+    // Replaced 6-second polling with real-time SSE stream events.
+    // Slow fallback reconciliation heartbeat (60s) for fail-safe background consistency.
+    const slowReconciliation = setInterval(() => {
+      if (navigator.onLine) {
+        fetchData(false);
+      }
+    }, 60000);
 
-    return () => clearInterval(pollInterval);
+    return () => clearInterval(slowReconciliation);
   }, [currentDate]);
 
   const handleGenerateSchedule = async () => {
@@ -429,6 +494,16 @@ export const SchedulingBoardPage: React.FC = () => {
           </p>
         </div>
         <div className="flex items-center gap-2.5">
+          {/* Realtime Stream & Offline Status */}
+          <RealtimeStatusBadge
+            streamStatus={streamStatus}
+            isOnline={isOnline}
+            syncState={syncState}
+            pendingCount={pendingCount}
+            lastSyncedAt={lastSyncedAt}
+            onSyncNow={syncNow}
+          />
+
           {/* Real-time Live Operations Clock */}
           <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs font-mono font-bold shadow-2xs">
             <Clock className="h-3.5 w-3.5 text-emerald-600 animate-pulse" />
@@ -455,7 +530,7 @@ export const SchedulingBoardPage: React.FC = () => {
             </button>
           </div>
 
-          <Button variant="outline" size="sm" onClick={fetchData} className="gap-1.5">
+          <Button variant="outline" size="sm" onClick={() => fetchData()} className="gap-1.5">
             <RefreshCw className={`h-4 w-4 ${loading || autoScheduling ? 'animate-spin' : ''}`} />
             <span>Sync Live</span>
           </Button>
@@ -499,6 +574,39 @@ export const SchedulingBoardPage: React.FC = () => {
           </Button>
         </div>
       </div>
+
+      {/* Offline PWA Cache Notice Banner */}
+      {(!isOnline || isCachedData) && (
+        <div className="rounded-xl border border-amber-300 bg-amber-50/90 p-4 text-sm text-amber-950 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs">
+          <div className="flex items-center gap-3">
+            <div className="p-2 rounded-lg bg-amber-100 text-amber-700">
+              <WifiOff className="h-5 w-5" />
+            </div>
+            <div>
+              <div className="font-bold text-amber-900 flex items-center gap-2">
+                <span>Operating in Offline-First Mode</span>
+                <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-amber-200/80 text-amber-800">
+                  IndexedDB Persistent Cache
+                </span>
+              </div>
+              <p className="text-xs text-amber-800 mt-0.5">
+                Displaying previously synchronized schedule.
+                {cachedSyncTime ? ` Last synchronized at ${new Date(cachedSyncTime).toLocaleTimeString()}.` : ''} All pending offline actions will automatically synchronize when connection resumes.
+              </p>
+            </div>
+          </div>
+          {pendingCount > 0 && (
+            <button
+              onClick={syncNow}
+              disabled={syncState === 'SYNCING'}
+              className="self-start sm:self-auto shrink-0 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white font-semibold text-xs transition shadow-xs"
+            >
+              <Database className="h-3.5 w-3.5" />
+              <span>Sync {pendingCount} Pending Changes</span>
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Autonomous Dispatch Active Banner */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 px-4 py-3 rounded-xl border border-emerald-300 bg-emerald-50/90 text-emerald-950 text-xs shadow-2xs">

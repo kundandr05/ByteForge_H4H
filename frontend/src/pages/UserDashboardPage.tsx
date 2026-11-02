@@ -30,6 +30,10 @@ import { AiBookingChatModal } from '../components/chat/AiBookingChatModal';
 import { LiveTrackingMap } from '../components/map/LiveTrackingMap';
 import { ensureArray } from '../utils/formatters';
 import { formatServiceZoneAddress, ZONE_ADDRESS_MAP } from '../utils/zoneAddress';
+import { useDispatchStream } from '../hooks/useDispatchStream';
+import { useOfflineSync } from '../hooks/useOfflineSync';
+import { offlineDb } from '../utils/offlineDb';
+import { WifiOff } from 'lucide-react';
 
 interface ServiceItem {
   id: string;
@@ -289,6 +293,17 @@ const SERVICE_CATEGORIES: ServiceCategory[] = [
 
 export const UserDashboardPage: React.FC = () => {
   const { user } = useAuth();
+  const { isOnline: networkOnline, pendingCount, syncNow } = useOfflineSync();
+  const [isCachedData, setIsCachedData] = useState(false);
+
+  // Real-time SSE stream hook for client booking updates
+  useDispatchStream({
+    enabled: networkOnline,
+    onEvent: (_event) => {
+      // If event belongs to this user or is relevant to their appointments
+      fetchUserJobs(true);
+    },
+  });
   const [searchParams, setSearchParams] = useSearchParams();
 
   // Selected category state (e.g. 'ac', 'appliance', etc.)
@@ -458,6 +473,15 @@ export const UserDashboardPage: React.FC = () => {
   const fetchUserJobs = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
     try {
+      if (!navigator.onLine) {
+        const cached = await offlineDb.getCachedWorkOrders(user.id);
+        if (cached.length > 0) {
+          setJobs(cached as any);
+          setIsCachedData(true);
+          return;
+        }
+      }
+
       const res = await jobsApi.list({ limit: 100 });
       const currentCustomerName = (user.name || '').toLowerCase().trim();
 
@@ -469,18 +493,30 @@ export const UserDashboardPage: React.FC = () => {
       );
 
       setJobs(filtered);
+      setIsCachedData(false);
+      offlineDb.cacheWorkOrders(user.id, filtered).catch(() => {});
     } catch (err) {
-      console.warn('Failed to load user appointments:', err);
+      console.warn('Failed to load user appointments, reading offline cache:', err);
+      const cached = await offlineDb.getCachedWorkOrders(user.id);
+      if (cached.length > 0) {
+        setJobs(cached as any);
+        setIsCachedData(true);
+      }
     } finally {
       if (!silent) setLoading(false);
     }
-  }, [user.name]);
+  }, [user.name, user.id]);
 
   useEffect(() => {
     fetchUserJobs();
+
+    // Replaced 3.5s polling loop with real-time SSE stream events.
+    // 45s slow heartbeat fallback for resilient edge recovery.
     const syncTimer = setInterval(() => {
-      fetchUserJobs(true);
-    }, 3500);
+      if (navigator.onLine) {
+        fetchUserJobs(true);
+      }
+    }, 45000);
     return () => clearInterval(syncTimer);
   }, [fetchUserJobs]);
 
@@ -586,6 +622,25 @@ export const UserDashboardPage: React.FC = () => {
       </div>
 
       {/* Success Booking Alert Banner */}
+      {(!networkOnline || isCachedData) && (
+        <div className="rounded-xl border border-amber-300 bg-amber-50 p-3.5 text-xs text-amber-950 flex items-center justify-between gap-3 shadow-xs">
+          <div className="flex items-center gap-2.5">
+            <WifiOff className="h-4 w-4 text-amber-700 shrink-0" />
+            <span>
+              <strong>Offline Mode:</strong> Viewing previously booked appointments saved on your device.
+            </span>
+          </div>
+          {pendingCount > 0 && (
+            <button
+              onClick={syncNow}
+              className="px-2.5 py-1 rounded-md bg-amber-600 text-white font-medium hover:bg-amber-700 transition"
+            >
+              Sync ({pendingCount})
+            </button>
+          )}
+        </div>
+      )}
+
       {bookingSuccessAlert && (
         <div className="rounded-2xl border border-emerald-500/30 bg-emerald-50 p-4 text-xs text-emerald-900 flex items-center justify-between shadow-xs animate-in fade-in duration-200">
           <div className="flex items-center gap-2.5">

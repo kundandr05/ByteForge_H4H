@@ -1,5 +1,6 @@
 import { prisma } from '../config/prisma';
 import { AppError } from '../utils/appError';
+import { dispatchEvents } from '../utils/dispatchEvents';
 import { transactionService } from '../services/transaction.service';
 import { runRecoveryEngine, RecoveryEngineInput } from './recovery.engine';
 import {

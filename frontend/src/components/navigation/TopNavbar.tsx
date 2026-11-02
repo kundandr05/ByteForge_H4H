@@ -5,6 +5,9 @@ import { Button } from '../common/Button';
 import { Badge } from '../common/Badge';
 import { useHealth } from '../../hooks/useHealth';
 import { useAuth } from '../../context/AuthContext';
+import { useDispatchStream } from '../../hooks/useDispatchStream';
+import { useOfflineSync } from '../../hooks/useOfflineSync';
+import { RealtimeStatusBadge } from '../common/RealtimeStatusBadge';
 
 interface TopNavbarProps {
   onToggleSidebar: () => void;
@@ -13,6 +16,8 @@ interface TopNavbarProps {
 export const TopNavbar: React.FC<TopNavbarProps> = ({ onToggleSidebar }) => {
   const { data: health, loading, refetch } = useHealth();
   const { user, role } = useAuth();
+  const { status: streamStatus } = useDispatchStream();
+  const { isOnline, syncState, pendingCount, lastSyncedAt, syncNow } = useOfflineSync();
 
   return (
     <header className="sticky top-0 z-30 flex h-16 w-full items-center justify-between border-b border-slate-200 bg-white/95 px-4 backdrop-blur sm:px-6">
@@ -73,10 +78,20 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({ onToggleSidebar }) => {
       </div>
 
       <div className="flex items-center gap-3">
+        {/* Real-time SSE & Offline PWA Connection Status */}
+        <RealtimeStatusBadge
+          streamStatus={streamStatus}
+          isOnline={isOnline}
+          syncState={syncState}
+          pendingCount={pendingCount}
+          lastSyncedAt={lastSyncedAt}
+          onSyncNow={syncNow}
+        />
+
         {/* Technical API node badge ONLY visible to admin */}
         {role === 'admin' && (
           <>
-            <div className="hidden md:flex items-center gap-1.5 px-3 py-1 rounded-md bg-slate-100 text-xs text-slate-600">
+            <div className="hidden xl:flex items-center gap-1.5 px-3 py-1 rounded-md bg-slate-100 text-xs text-slate-600">
               <Cpu className="h-3.5 w-3.5 text-slate-500" />
               <span>API Node {health?.system.nodeVersion || 'v25'}</span>
               <span className="text-slate-300">•</span>
@@ -89,11 +104,11 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({ onToggleSidebar }) => {
               size="sm"
               onClick={() => refetch()}
               isLoading={loading}
-              className="gap-1.5 text-xs text-slate-600"
+              className="hidden sm:inline-flex gap-1.5 text-xs text-slate-600"
               title="Refresh Backend Status"
             >
               <RefreshCw className="h-3.5 w-3.5" />
-              <span className="hidden sm:inline">Sync</span>
+              <span>Sync</span>
             </Button>
           </>
         )}

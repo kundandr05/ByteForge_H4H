@@ -1,90 +1,145 @@
-// DispatchGrid Field Technician Service Worker
-// Provides offline capability & asset caching for field specialists in low-signal areas
+// DispatchGrid Field Ops Service Worker (v2)
+// Offline-first PWA caching & operational sync resilience
 
-const CACHE_NAME = 'dispatchgrid-v1';
-const ASSETS_TO_CACHE = [
+const CACHE_VERSION = 'dispatchgrid-v2';
+const STATIC_CACHE = `${CACHE_VERSION}-static`;
+const DATA_CACHE = `${CACHE_VERSION}-data`;
+
+const CORE_ASSETS = [
   '/',
   '/index.html',
+  '/offline.html',
   '/manifest.json',
-  '/technician-dashboard',
-  '/user-dashboard',
+  '/vite.svg',
 ];
 
-// Install: Cache critical assets
+// Endpoints that should NEVER be cached (SSE streams, ticket handshakes, auth)
+const NO_CACHE_ROUTES = [
+  '/api/dispatch/stream',
+  '/api/dispatch/stream/auth',
+  '/api/auth',
+];
+
+// Install: Pre-cache core shell & offline fallback
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => {
-      return cache.addAll(ASSETS_TO_CACHE).catch((err) => {
-        console.warn('PWA initial asset cache notice:', err);
+    caches.open(STATIC_CACHE).then((cache) => {
+      return cache.addAll(CORE_ASSETS).catch((err) => {
+        console.warn('[SW] Core assets pre-cache warning:', err);
       });
     })
   );
   self.skipWaiting();
 });
 
-// Activate: Purge stale caches
+// Activate: Purge older version caches
 self.addEventListener('activate', (event) => {
   event.waitUntil(
-    caches.keys().then((cacheNames) => {
+    caches.keys().then((keys) => {
       return Promise.all(
-        cacheNames.map((name) => {
-          if (name !== CACHE_NAME) {
-            return caches.delete(name);
+        keys.map((key) => {
+          if (key !== STATIC_CACHE && key !== DATA_CACHE) {
+            console.log('[SW] Purging outdated cache:', key);
+            return caches.delete(key);
           }
         })
       );
-    })
+    }).then(() => self.clients.claim())
   );
-  self.clients.claim();
 });
 
-// Fetch: Stale-while-revalidate for static assets, network-first for live APIs
+// Fetch event listener
 self.addEventListener('fetch', (event) => {
-  const url = new URL(event.request.url);
+  const { request } = event;
+  const url = new URL(request.url);
 
-  // Bypass API routes from cache so live dispatch data is fresh, but fallback to cache if network fails
+  // 1. Never cache non-GET requests or streaming/auth endpoints
+  if (
+    request.method !== 'GET' ||
+    NO_CACHE_ROUTES.some((route) => url.pathname.startsWith(route))
+  ) {
+    return;
+  }
+
+  // 2. Operational API Requests (Network First with Cache Fallback)
   if (url.pathname.startsWith('/api/')) {
+    // Only cache GET operational schedule and jobs queries for offline viewing
+    const isCacheableApi =
+      url.pathname.startsWith('/api/scheduling/current') ||
+      url.pathname.startsWith('/api/jobs') ||
+      url.pathname.startsWith('/api/technicians');
+
+    if (!isCacheableApi) {
+      return;
+    }
+
     event.respondWith(
-      fetch(event.request).catch(async () => {
-        const cached = await caches.match(event.request);
-        if (cached) return cached;
-        return new Response(
-          JSON.stringify({
-            success: false,
-            message: 'You are currently offline. Field cached operations active.',
-            offline: true,
-          }),
-          {
-            headers: { 'Content-Type': 'application/json' },
-            status: 503,
+      fetch(request)
+        .then((networkResponse) => {
+          if (networkResponse && networkResponse.status === 200) {
+            const clone = networkResponse.clone();
+            caches.open(DATA_CACHE).then((cache) => {
+              cache.put(request, clone);
+            });
           }
-        );
-      })
+          return networkResponse;
+        })
+        .catch(async () => {
+          const cachedResponse = await caches.match(request);
+          if (cachedResponse) {
+            return cachedResponse;
+          }
+          return new Response(
+            JSON.stringify({
+              success: false,
+              message: 'Device is offline. Serving localized IndexedDB cache.',
+              offline: true,
+              data: [],
+            }),
+            {
+              headers: { 'Content-Type': 'application/json' },
+              status: 200,
+            }
+          );
+        })
     );
     return;
   }
 
-  // Static assets: Cache first with network fallback
+  // 3. Navigation requests (HTML pages): Stale While Revalidate with Offline fallback
+  if (request.mode === 'navigate') {
+    event.respondWith(
+      fetch(request)
+        .catch(() => {
+          return caches.match('/offline.html');
+        })
+    );
+    return;
+  }
+
+  // 4. Static assets (JS, CSS, images, fonts): Cache First with Network Fallback
   event.respondWith(
-    caches.match(event.request).then((cachedResponse) => {
+    caches.match(request).then((cachedResponse) => {
       if (cachedResponse) {
         return cachedResponse;
       }
-      return fetch(event.request).then((networkResponse) => {
+      return fetch(request).then((networkResponse) => {
         if (
-          !networkResponse ||
-          networkResponse.status !== 200 ||
-          networkResponse.type !== 'basic'
+          networkResponse &&
+          networkResponse.status === 200 &&
+          (url.pathname.endsWith('.js') ||
+            url.pathname.endsWith('.css') ||
+            url.pathname.endsWith('.svg') ||
+            url.pathname.endsWith('.png') ||
+            url.pathname.endsWith('.woff2'))
         ) {
-          return networkResponse;
+          const clone = networkResponse.clone();
+          caches.open(STATIC_CACHE).then((cache) => {
+            cache.put(request, clone);
+          });
         }
-        const responseToCache = networkResponse.clone();
-        caches.open(CACHE_NAME).then((cache) => {
-          cache.put(event.request, responseToCache);
-        });
         return networkResponse;
       });
     })
   );
 });
-

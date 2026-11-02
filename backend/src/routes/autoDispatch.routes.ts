@@ -10,6 +10,7 @@ router.post('/auto-schedule-all', autoDispatchController.autoScheduleAll);
 router.post('/simulate/:jobId', autoDispatchController.simulateResponse);
 
 // Real-time cascade status & SSE stream
+router.post('/stream/auth', autoDispatchController.generateStreamTicket);
 router.get('/stream', autoDispatchController.subscribeToStream);
 router.get('/status', autoDispatchController.getAllCascades);
 router.get('/status/:jobId', autoDispatchController.getCascadeById);

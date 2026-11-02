@@ -17,7 +17,7 @@ ReactDOM.createRoot(rootElement).render(
 );
 
 // Register Offline Service Worker for Field Operations
-if ('serviceWorker' in navigator && process.env.NODE_ENV === 'production') {
+if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('/sw.js').catch((err) => {
       console.warn('Field ServiceWorker registration notice:', err);

@@ -15,6 +15,8 @@ export async function runSeed(seedValue = 0x1337beef): Promise<{
   console.log(`  Deterministic PRNG Seed: 0x${seedValue.toString(16).toUpperCase()}`);
   console.log(`======================================================\n`);
 
+  
+
   const prng = new SeededPRNG(seedValue);
 
   // 1. Clean existing records in safe foreign-key order
@@ -184,6 +186,101 @@ export async function runSeed(seedValue = 0x1337beef): Promise<{
     console.log(`  - ${scen.padEnd(46)}: ${count} jobs`);
   }
   console.log(`======================================================\n`);
+
+  // 5. Seed Sarah Jenkins consumer jobs & assignments for demo user journey
+  const carlos = (await prisma.technician.findFirst({
+    where: { name: { contains: 'Carlos' } },
+  })) || (await prisma.technician.findFirst());
+
+  if (carlos) {
+    const sj1 = await prisma.job.create({
+      data: {
+        id: 'sarah-job-1',
+        customerName: 'Sarah Jenkins',
+        description: 'Central Air Conditioning Diagnostic & Compressor Repair',
+        priority: 'HIGH',
+        status: 'IN_PROGRESS',
+        serviceZone: 'ZONE_NORTH',
+        requiredSkills: JSON.stringify(['HVAC']),
+        estimatedDuration: 60,
+        latitude: 40.7128,
+        longitude: -74.006,
+        earliestStart: new Date(),
+        latestEnd: new Date(Date.now() + 86400000),
+        slaDeadline: new Date(Date.now() + 43200000),
+      },
+    });
+
+    await prisma.assignment.create({
+      data: {
+        jobId: sj1.id,
+        technicianId: carlos.id,
+        scheduledStart: new Date(Date.now() - 30 * 60000),
+        scheduledEnd: new Date(Date.now() + 30 * 60000),
+        travelTime: 12,
+        status: 'IN_PROGRESS',
+      },
+    });
+
+    const sj2 = await prisma.job.create({
+      data: {
+        id: 'sarah-job-2',
+        customerName: 'Sarah Jenkins',
+        description: 'Smart Thermostat Installation & WiFi Calibration',
+        priority: 'MEDIUM',
+        status: 'COMPLETED',
+        serviceZone: 'ZONE_NORTH',
+        requiredSkills: JSON.stringify(['ELECTRICAL']),
+        estimatedDuration: 45,
+        latitude: 40.715,
+        longitude: -74.009,
+        earliestStart: new Date(Date.now() - 86400000),
+        latestEnd: new Date(),
+        slaDeadline: new Date(),
+      },
+    });
+
+    await prisma.assignment.create({
+      data: {
+        jobId: sj2.id,
+        technicianId: carlos.id,
+        scheduledStart: new Date(Date.now() - 4 * 3600000),
+        scheduledEnd: new Date(Date.now() - 3 * 3600000),
+        travelTime: 10,
+        status: 'COMPLETED',
+      },
+    });
+
+    const sj3 = await prisma.job.create({
+      data: {
+        id: 'sarah-job-3',
+        customerName: 'Sarah Jenkins',
+        description: 'Refrigerator Ice Maker Leak & Water Line Replacement',
+        priority: 'MEDIUM',
+        status: 'ASSIGNED',
+        serviceZone: 'ZONE_NORTH',
+        requiredSkills: JSON.stringify(['PLUMBING', 'APPLIANCE']),
+        estimatedDuration: 60,
+        latitude: 40.718,
+        longitude: -74.002,
+        earliestStart: new Date(),
+        latestEnd: new Date(Date.now() + 86400000),
+        slaDeadline: new Date(Date.now() + 86400000),
+      },
+    });
+
+    await prisma.assignment.create({
+      data: {
+        jobId: sj3.id,
+        technicianId: carlos.id,
+        scheduledStart: new Date(Date.now() + 2 * 3600000),
+        scheduledEnd: new Date(Date.now() + 3 * 3600000),
+        travelTime: 15,
+        status: 'SCHEDULED',
+      },
+    });
+    console.log('✓ Successfully seeded Sarah Jenkins jobs and Carlos assignments at end of seed.');
+  }
 
   return {
     techniciansCount: totalTechnicians,
