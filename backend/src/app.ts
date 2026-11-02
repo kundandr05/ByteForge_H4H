@@ -1,5 +1,7 @@
 import express, { Express, Request, Response } from 'express';
 import cors from 'cors';
+import path from 'path';
+import fs from 'fs';
 import { config } from './config';
 import { requestLogger } from './middleware/requestLogger';
 import { errorHandler } from './middleware/errorHandler';
@@ -47,18 +49,33 @@ export const createApp = (): Express => {
   // Mount API routes
   app.use('/api', routes);
 
-  // Root welcome route
-  app.get('/', (_req: Request, res: Response) => {
-    res.json({
-      name: 'DispatchGrid API',
-      status: 'operational',
-      documentation: '/api/docs',
-      health: '/api/health',
-      timestamp: new Date().toISOString(),
-    });
-  });
+  // Check if frontend build dist exists to serve as unified full-stack application
+  const frontendDistPath = path.resolve(__dirname, '../../frontend/dist');
+  if (fs.existsSync(frontendDistPath)) {
+    // Serve static assets from frontend/dist
+    app.use(express.static(frontendDistPath));
 
-  // 404 Not Found handler for undefined routes
+    // Handle React client-side SPA routing (fallback for non-API routes)
+    app.get('*', (req: Request, res: Response, next) => {
+      if (req.path.startsWith('/api')) {
+        return next();
+      }
+      res.sendFile(path.join(frontendDistPath, 'index.html'));
+    });
+  } else {
+    // Root welcome route for API-only mode
+    app.get('/', (_req: Request, res: Response) => {
+      res.json({
+        name: 'DispatchGrid API',
+        status: 'operational',
+        documentation: '/api/docs',
+        health: '/api/health',
+        timestamp: new Date().toISOString(),
+      });
+    });
+  }
+
+  // 404 Not Found handler for undefined API routes
   app.use((req: Request, _res: Response, next) => {
     next(new AppError(`Route ${req.method} ${req.originalUrl} not found`, 404, 'NOT_FOUND'));
   });
