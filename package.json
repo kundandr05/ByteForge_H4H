@@ -8,7 +8,7 @@
     "frontend"
   ],
   "scripts": {
-    "postinstall": "npm run prisma:generate",
+    "postinstall": "node -e \"const fs = require('fs'); if (!fs.existsSync('backend/.env') && fs.existsSync('backend/.env.example')) fs.copyFileSync('backend/.env.example', 'backend/.env'); if (!fs.existsSync('.env') && fs.existsSync('backend/.env.example')) fs.copyFileSync('backend/.env.example', '.env');\" && npm run prisma:generate",
     "start": "node backend/dist/server.js",
     "build": "npm run prisma:generate && npm run db:push && npm run build:backend && npm run build:frontend && npm run seed",
     "render:build": "npm run prisma:generate && npm run db:push && npm run build:backend && npm run build:frontend && npm run seed",
