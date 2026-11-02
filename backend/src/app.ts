@@ -12,15 +12,39 @@ import { AppError } from './utils/appError';
 export const createApp = (): Express => {
   const app = express();
 
-  // Configure CORS
+  // Configure CORS with production & multi-environment compatibility
   const allowedOrigins = config.CORS_ORIGIN.split(',').map((origin) => origin.trim());
   app.use(
     cors({
       origin: (origin, callback) => {
+        // Allow requests with no origin (e.g. mobile apps, curl, server-to-server)
         if (!origin) return callback(null, true);
-        if (allowedOrigins.indexOf(origin) !== -1 || allowedOrigins.includes('*')) {
+
+        // Allow wildcard or explicit origin matches
+        if (allowedOrigins.includes('*') || allowedOrigins.includes(origin)) {
           return callback(null, true);
         }
+
+        // Always allow localhost, render.com, and vercel.app domains
+        try {
+          const parsed = new URL(origin);
+          if (
+            parsed.hostname === 'localhost' ||
+            parsed.hostname === '127.0.0.1' ||
+            parsed.hostname.endsWith('.onrender.com') ||
+            parsed.hostname.endsWith('.vercel.app')
+          ) {
+            return callback(null, true);
+          }
+        } catch {
+          // ignore invalid URLs
+        }
+
+        // In production unified mode, allow all web clients rather than failing static assets
+        if (process.env.NODE_ENV === 'production' || config.NODE_ENV === 'production') {
+          return callback(null, true);
+        }
+
         return callback(new AppError(`Origin ${origin} not allowed by CORS`, 403));
       },
       credentials: true,
@@ -50,7 +74,14 @@ export const createApp = (): Express => {
   app.use('/api', routes);
 
   // Check if frontend build dist exists to serve as unified full-stack application
-  const frontendDistPath = path.resolve(__dirname, '../../frontend/dist');
+  const candidateDistPaths = [
+    path.resolve(__dirname, '../../frontend/dist'),
+    path.resolve(__dirname, '../frontend/dist'),
+    path.resolve(process.cwd(), 'frontend/dist'),
+    path.resolve(process.cwd(), '../frontend/dist'),
+  ];
+  const frontendDistPath = candidateDistPaths.find((p) => fs.existsSync(p)) || candidateDistPaths[0];
+
   if (fs.existsSync(frontendDistPath)) {
     // Serve static assets from frontend/dist
     app.use(express.static(frontendDistPath));
